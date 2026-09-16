@@ -48,7 +48,7 @@ library(patchwork)
 # El Rmd y el CSV deben estar en la misma carpeta, o el CSV debe
 # encontrarse dentro de una carpeta llamada "datasetss".
 
-archivo_csv <- "datasetss/NBA_espanol.csv"
+archivo_csv <- "Repo_NBA/NBA_espanol.csv"
 
 if (!file.exists(archivo_csv) && file.exists("NBA_espanol.csv")) {
   archivo_csv <- "NBA_espanol.csv"
