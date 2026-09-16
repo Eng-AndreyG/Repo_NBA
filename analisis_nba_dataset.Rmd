@@ -1,0 +1,1378 @@
+---
+title: "Análisis Univariado y Multivariado: Estadísticas de Jugadores de la NBA"
+subtitle: "Temporadas 1982-2022 — Exploración de variables numéricas y categóricas con enfoque estadístico-deportivo (dataset en español)"
+author: "Análisis exploratorio de datos (EDA)"
+date: "`r format(Sys.Date(), '%d de %B de %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    theme: flatly
+    number_sections: true
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+# ============================================================
+# CONFIGURACIÓN
+# ============================================================
+
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.align = "center",
+  fig.width = 9,
+  fig.height = 4
+)
+options(scipen = 999)
+
+# ============================================================
+# PAQUETES
+# ============================================================
+# Si alguno no está instalado, descomenta y ejecuta UNA vez:
+# install.packages(c("tidyverse", "knitr", "kableExtra",
+#                    "e1071", "scales", "patchwork"))
+
+library(tidyverse)
+library(knitr)
+library(kableExtra)
+library(e1071)
+library(scales)
+library(patchwork)
+
+# ============================================================
+# CARGA AUTOMÁTICA DEL DATASET
+# ============================================================
+# El Rmd y el CSV deben estar en la misma carpeta, o el CSV debe
+# encontrarse dentro de una carpeta llamada "datasetss".
+
+archivo_csv <- "datasetss/NBA_espanol.csv"
+
+if (!file.exists(archivo_csv) && file.exists("NBA_espanol.csv")) {
+  archivo_csv <- "NBA_espanol.csv"
+}
+
+if (!file.exists(archivo_csv)) {
+  stop(
+    paste0(
+      "No se encontró 'NBA_espanol.csv'. ",
+      "Coloca el CSV en la misma carpeta que este Rmd ",
+      "o dentro de una carpeta llamada 'datasetss'."
+    )
+  )
+}
+
+df <- read_csv(
+  archivo_csv,
+  show_col_types = FALSE,
+  progress = FALSE
+) %>%
+  as.data.frame()
+
+# Convertir variables de texto a factor. "jugador" queda como factor de
+# muy alta cardinalidad (es un identificador, no una variable categórica
+# de análisis); "posicion" y "equipo" sí son variables categóricas
+# propiamente dichas y se tratan como tales en el resto del documento.
+df <- df %>%
+  mutate(across(where(is.character), as.factor))
+
+# ============================================================
+# ETIQUETAS LEGIBLES PARA CADA VARIABLE NUMÉRICA
+# ============================================================
+# Se usan como títulos de sección/gráfico a lo largo de todo el documento.
+
+etiquetas_num <- c(
+  temporada = "Temporada",
+  edad = "Edad del jugador",
+  partidos_jugados = "Partidos jugados",
+  partidos_titular = "Partidos como titular",
+  minutos_pp = "Minutos por partido",
+  tiros_anotados_pp = "Tiros de campo anotados por partido",
+  tiros_intentados_pp = "Tiros de campo intentados por partido",
+  porc_tiro_campo = "Porcentaje de tiro de campo",
+  triples_anotados_pp = "Triples anotados por partido",
+  triples_intentados_pp = "Triples intentados por partido",
+  porc_triple = "Porcentaje de triple",
+  dobles_anotados_pp = "Tiros de 2 anotados por partido",
+  dobles_intentados_pp = "Tiros de 2 intentados por partido",
+  porc_doble = "Porcentaje de tiro de 2 puntos",
+  porc_tiro_efectivo = "Porcentaje de tiro efectivo (eFG%)",
+  libres_anotados_pp = "Tiros libres anotados por partido",
+  libres_intentados_pp = "Tiros libres intentados por partido",
+  porc_libre = "Porcentaje de tiro libre",
+  rebotes_of_pp = "Rebotes ofensivos por partido",
+  rebotes_def_pp = "Rebotes defensivos por partido",
+  rebotes_totales_pp = "Rebotes totales por partido",
+  asistencias_pp = "Asistencias por partido",
+  robos_pp = "Robos por partido",
+  tapones_pp = "Tapones (bloqueos) por partido",
+  perdidas_pp = "Pérdidas de balón por partido",
+  faltas_pp = "Faltas personales por partido",
+  puntos_pp = "Puntos por partido",
+  minutos_totales = "Minutos totales en la temporada",
+  indice_eficiencia = "Player Efficiency Rating (PER)",
+  porc_tiro_verdadero = "Porcentaje de tiro verdadero (TS%)",
+  porc_intentos_triple = "Proporción de intentos que son de triple",
+  razon_libres_intentos = "Razón libres intentados / tiros de campo intentados",
+  porc_rebotes_of_disp = "% de rebotes ofensivos disponibles capturados",
+  porc_rebotes_def_disp = "% de rebotes defensivos disponibles capturados",
+  porc_rebotes_tot_disp = "% de rebotes totales disponibles capturados",
+  porc_asistencias_equipo = "% de canastas de compañeros asistidas",
+  porc_robos_equipo = "% de posesiones rivales terminadas en robo",
+  porc_tapones_equipo = "% de tiros de 2 rivales bloqueados",
+  porc_perdidas_jugada = "Pérdidas por cada 100 jugadas individuales",
+  porc_uso_jugador = "Porcentaje de uso del jugador",
+  victorias_ofensiva = "Win Shares ofensivos",
+  victorias_defensa = "Win Shares defensivos",
+  victorias_total = "Win Shares totales",
+  victorias_por_48min = "Win Shares por 48 minutos",
+  masmenos_ofensivo = "Box Plus/Minus ofensivo",
+  masmenos_defensivo = "Box Plus/Minus defensivo",
+  masmenos_total = "Box Plus/Minus total",
+  valor_sobre_reemplazo = "Value Over Replacement Player (VORP)",
+  porc_votos_mvp = "Fracción de votos recibidos al MVP",
+  margen_victoria = "Margen de victoria del equipo",
+  margen_victoria_ajust = "Margen de victoria ajustado por calendario",
+  porc_victorias_equipo = "Porcentaje de victorias del equipo"
+)
+```
+
+# Introducción
+
+Este documento presenta un **análisis exploratorio univariado y multivariado**
+del dataset `NBA_espanol.csv` (traducción al español de los nombres de
+columna de `NBA_Dataset.csv`), que contiene **`r comma(nrow(df), big.mark=",")` registros
+temporada-jugador** de la NBA entre las temporadas 1982 y 2022 (41 temporadas),
+con estadísticas tradicionales de caja (puntos, rebotes, asistencias, tiros de
+campo, etc.) y métricas avanzadas (PER, Win Shares, Box Plus/Minus, VORP,
+entre otras) publicadas originalmente por Basketball-Reference.
+
+A diferencia de los análisis previos de este proyecto (basados en datasets
+**sintéticos** de desempeño estudiantil), este es un dataset de **datos
+reales, observados y registrados de partidos efectivamente jugados**, lo que
+implica un tipo distinto de reto exploratorio: aquí sí es razonable esperar
+relaciones fuertes y significativas entre variables, algunas de ellas
+matemáticamente definidas y otras genuinamente empíricas — distinción que se
+aborda con detalle en la sección de matriz de correlación.
+
+El objetivo no es solo describir matemáticamente cada variable (media,
+mediana, desviación estándar, etc.), sino **interpretar qué significa cada
+resultado desde una perspectiva del análisis deportivo**: ¿qué le diría este
+dato a un analista de rendimiento, a un cuerpo técnico o a un front office
+interesado en evaluar jugadores? A diferencia de la versión anterior de este
+documento, aquí se analiza **de forma individual cada una de las variables
+numéricas del dataset** (no solo un subconjunto reducido), para luego —en la
+sección final de recomendaciones— identificar cuáles merecen conservarse en
+un informe ejecutivo más corto.
+
+# Descripción del dataset
+
+Cada fila del dataset representa el desempeño de **un jugador en una
+temporada** (y, cuando el jugador fue transferido de equipo a mitad de
+temporada, puede haber una fila adicional por cada equipo, más una fila
+resumen identificada con el código de equipo `"TOT"`). El conjunto contiene
+**`r comma(nrow(df))` registros y `r ncol(df)` variables**, que combinan:
+
+- **Identificación:** nombre del jugador (`jugador`).
+- **Variables categóricas:** posición de juego (`posicion`) y equipo/franquicia
+  (`equipo`).
+- **Variables numéricas discretas/temporales:** temporada (`temporada`), edad
+  (`edad`), partidos jugados (`partidos_jugados`), partidos como titular
+  (`partidos_titular`) y minutos totales (`minutos_totales`).
+- **Variables numéricas continuas:** estadísticas "por partido" (tiros,
+  rebotes, asistencias, puntos, etc.), porcentajes de tiro, métricas
+  avanzadas normalizadas por posesión (`porc_*`), e indicadores compuestos de
+  valor del jugador (PER, Win Shares, BPM, VORP) y del equipo (margen de
+  victoria, porcentaje de victorias).
+
+El objetivo del análisis es describir el comportamiento individual de las
+variables y obtener información útil desde una perspectiva de analítica
+deportiva, en particular sobre la relación entre el uso de un jugador
+(minutos, tiros), su producción estadística y las métricas compuestas de
+valor.
+
+# Lectura y transformación de las variables
+
+El archivo CSV se importa con `read_csv()` (paquete `readr`). Las variables
+de texto (`jugador`, `posicion`, `equipo`) se convierten a `factor` mediante:
+
+```r
+df <- df %>%
+  mutate(across(where(is.character), as.factor))
+```
+
+`jugador` queda técnicamente como factor, pero **no se trata como variable
+categórica de análisis**: tiene
+`r comma(length(unique(df$jugador)))` valores distintos (un nombre de
+jugador por fila, repetido a través de las temporadas en las que jugó), por
+lo que cumple el rol de **identificador/etiqueta**, no de categoría
+analizable con tablas de frecuencia. `posicion` y `equipo`, en cambio, sí son
+variables categóricas propiamente dichas (pocas categorías, cada una con un
+significado sustantivo) y se analizan como tales más adelante.
+
+## ¿Qué es un análisis univariado?
+
+El análisis univariado estudia **una variable a la vez**, sin buscar
+relaciones entre variables (eso sería un análisis bivariado o multivariado).
+Para variables **numéricas** se usan medidas de tendencia central (media,
+mediana), de dispersión (desviación estándar, rango, rango intercuartílico) y
+de forma (asimetría), apoyadas en histogramas y diagramas de caja y bigotes
+(boxplots). Para variables **categóricas** se usan tablas de frecuencia y
+gráficos de barras, ya que no tiene sentido calcular un "promedio" de una
+categoría como `posicion` o `equipo`.
+
+# Diccionario de datos
+
+Antes de analizar, es indispensable entender **qué mide cada variable, en
+qué escala está y cómo se calcula**, porque en este dataset varias columnas
+empiezan con `porc_` ("porcentaje") pero **no todas están en la misma
+escala**: algunas son fracciones entre 0.0 y 1.0 (por ejemplo
+`porc_tiro_campo`), mientras que otras son puntos porcentuales entre 0 y 100
+(por ejemplo `porc_uso_jugador`). Ignorar esta diferencia es una fuente común
+de errores de interpretación en analítica deportiva.
+
+```{r diccionario}
+diccionario <- tribble(
+  ~Variable, ~Tipo, ~Descripcion_academica, ~Como_se_mide,
+  "temporada", "Numérica discreta (temporal)", "Temporada de la NBA (el año indica el año de cierre de la temporada; 1982 = temporada 1981-82).", "Año (1982 a 2022).",
+  "jugador", "Identificador", "Nombre del jugador.", "Texto libre, 3,283 jugadores distintos; no se analiza univariadamente.",
+  "posicion", "Categórica", "Posición o combinación de posiciones jugadas.", "Texto, 17 categorías (C, PF, SF, SG, PG y combinaciones híbridas).",
+  "edad", "Numérica discreta", "Edad del jugador durante esa temporada.", "Años (18 a 44).",
+  "equipo", "Categórica", "Equipo/franquicia; \"TOT\" si el jugador sumó estadísticas de varios equipos tras ser transferido.", "Texto, 41 códigos (incluye franquicias reubicadas/renombradas).",
+  "partidos_jugados", "Numérica discreta", "Partidos jugados en la temporada.", "Conteo entero (1 a 85; ver nota sobre filas TOT).",
+  "partidos_titular", "Numérica discreta", "Partidos jugados como titular.", "Conteo entero (0 a 83, siempre ≤ partidos_jugados).",
+  "minutos_pp", "Numérica continua", "Minutos jugados por partido.", "Minutos (0 a ~41).",
+  "tiros_anotados_pp", "Numérica continua", "Canastas de campo anotadas por partido.", "Conteo por partido.",
+  "tiros_intentados_pp", "Numérica continua", "Intentos de canasta de campo por partido.", "Conteo por partido.",
+  "porc_tiro_campo", "Numérica continua", "Porcentaje de acierto en tiros de campo.", "Fracción 0.0-1.0.",
+  "triples_anotados_pp", "Numérica continua", "Triples anotados por partido.", "Conteo por partido.",
+  "triples_intentados_pp", "Numérica continua", "Intentos de triple por partido.", "Conteo por partido.",
+  "porc_triple", "Numérica continua", "Porcentaje de acierto en triples.", "Fracción 0.0-1.0 (NA si 0 intentos).",
+  "dobles_anotados_pp", "Numérica continua", "Tiros de 2 puntos anotados por partido.", "Conteo por partido.",
+  "dobles_intentados_pp", "Numérica continua", "Intentos de tiro de 2 puntos por partido.", "Conteo por partido.",
+  "porc_doble", "Numérica continua", "Porcentaje de acierto en tiros de 2 puntos.", "Fracción 0.0-1.0 (NA si 0 intentos).",
+  "porc_tiro_efectivo", "Numérica continua", "Porcentaje de tiro efectivo (pondera el mayor valor del triple).", "Fracción, teórica 0.0-1.0 (hasta 1.5 en muestras muy pequeñas).",
+  "libres_anotados_pp", "Numérica continua", "Tiros libres anotados por partido.", "Conteo por partido.",
+  "libres_intentados_pp", "Numérica continua", "Intentos de tiro libre por partido.", "Conteo por partido.",
+  "porc_libre", "Numérica continua", "Porcentaje de acierto en tiros libres.", "Fracción 0.0-1.0 (NA si 0 intentos).",
+  "rebotes_of_pp", "Numérica continua", "Rebotes ofensivos por partido.", "Conteo por partido.",
+  "rebotes_def_pp", "Numérica continua", "Rebotes defensivos por partido.", "Conteo por partido.",
+  "rebotes_totales_pp", "Numérica continua", "Rebotes totales por partido (= rebotes_of_pp + rebotes_def_pp).", "Conteo por partido.",
+  "asistencias_pp", "Numérica continua", "Asistencias por partido.", "Conteo por partido.",
+  "robos_pp", "Numérica continua", "Robos de balón por partido.", "Conteo por partido.",
+  "tapones_pp", "Numérica continua", "Bloqueos por partido.", "Conteo por partido.",
+  "perdidas_pp", "Numérica continua", "Pérdidas de balón por partido.", "Conteo por partido.",
+  "faltas_pp", "Numérica continua", "Faltas personales por partido.", "Conteo por partido.",
+  "puntos_pp", "Numérica continua", "Puntos anotados por partido.", "Conteo por partido.",
+  "minutos_totales", "Numérica discreta", "Minutos totales jugados en la temporada.", "Conteo entero.",
+  "indice_eficiencia", "Numérica continua", "Player Efficiency Rating: índice compuesto de eficiencia por minuto, ajustado por ritmo (15.0 = promedio de liga).", "Escala centrada en 15 (puede ser negativa).",
+  "porc_tiro_verdadero", "Numérica continua", "Porcentaje de tiro verdadero (pondera tiros de 2, 3 y libres).", "Fracción, teórica 0.0-1.0 (hasta 1.5 en muestras muy pequeñas).",
+  "porc_intentos_triple", "Numérica continua", "Proporción de los intentos de campo que fueron de triple.", "Fracción 0.0-1.0.",
+  "razon_libres_intentos", "Numérica continua", "Razón entre intentos de tiro libre e intentos de campo.", "Razón no acotada a [0,1] (0 a 6 en este dataset).",
+  "porc_rebotes_of_disp", "Numérica continua", "% estimado de rebotes ofensivos disponibles capturados mientras el jugador estuvo en cancha.", "Puntos porcentuales 0-100.",
+  "porc_rebotes_def_disp", "Numérica continua", "% estimado de rebotes defensivos disponibles capturados.", "Puntos porcentuales 0-100.",
+  "porc_rebotes_tot_disp", "Numérica continua", "% estimado de rebotes totales disponibles capturados.", "Puntos porcentuales 0-86.4.",
+  "porc_asistencias_equipo", "Numérica continua", "% estimado de canastas de compañeros asistidas mientras el jugador estuvo en cancha.", "Puntos porcentuales 0-100.",
+  "porc_robos_equipo", "Numérica continua", "% estimado de posesiones rivales que terminaron en robo del jugador.", "Puntos porcentuales 0-25.",
+  "porc_tapones_equipo", "Numérica continua", "% estimado de tiros de campo rivales de 2 puntos bloqueados por el jugador.", "Puntos porcentuales 0-77.8.",
+  "porc_perdidas_jugada", "Numérica continua", "Pérdidas de balón estimadas por cada 100 jugadas individuales.", "Puntos porcentuales 0-100.",
+  "porc_uso_jugador", "Numérica continua", "% estimado de las jugadas del equipo \"usadas\" por el jugador mientras estuvo en cancha.", "Puntos porcentuales 0-100.",
+  "victorias_ofensiva", "Numérica continua", "Win Shares ofensivos: victorias atribuidas a la contribución ofensiva del jugador.", "Puede ser negativo.",
+  "victorias_defensa", "Numérica continua", "Win Shares defensivos.", "Puede ser negativo.",
+  "victorias_total", "Numérica continua", "Win Shares totales (= victorias_ofensiva + victorias_defensa).", "Puede ser negativo.",
+  "victorias_por_48min", "Numérica continua", "Win Shares por cada 48 minutos (ritmo de un partido completo).", "Puede ser negativo.",
+  "masmenos_ofensivo", "Numérica continua", "Box Plus/Minus ofensivo (puntos por 100 posesiones sobre el jugador promedio de liga).", "Puede ser negativo.",
+  "masmenos_defensivo", "Numérica continua", "Box Plus/Minus defensivo.", "Puede ser negativo.",
+  "masmenos_total", "Numérica continua", "Box Plus/Minus total (= masmenos_ofensivo + masmenos_defensivo).", "Puede ser negativo.",
+  "valor_sobre_reemplazo", "Numérica continua", "Value Over Replacement Player: valor acumulado respecto a un jugador de reemplazo.", "Puede ser negativo.",
+  "porc_votos_mvp", "Numérica continua", "Fracción de los votos posibles al premio MVP recibidos por el jugador esa temporada.", "Fracción 0.0-1.0 (0 para la gran mayoría).",
+  "margen_victoria", "Numérica continua", "Margen de victoria promedio del equipo del jugador esa temporada (diferencia de puntos por partido).", "Puede ser negativo.",
+  "margen_victoria_ajust", "Numérica continua", "Margen de victoria del equipo, ajustado por fuerza de calendario.", "Puede ser negativo.",
+  "porc_victorias_equipo", "Numérica continua", "Porcentaje de victorias del equipo del jugador esa temporada.", "Fracción 0.0-1.0."
+)
+
+diccionario %>%
+  kable(
+    col.names = c("Variable", "Tipo", "Qué representa", "Cómo se mide / escala")
+  ) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    font_size = 11
+  ) %>%
+  column_spec(1, bold = TRUE, width = "13%")
+```
+
+# Calidad de los datos
+
+A diferencia de un dataset sintético, en datos reales de estadísticas
+deportivas las ausencias (`NA`) y ciertos valores "atípicos" suelen tener una
+**causa estructural identificable** (por ejemplo, un porcentaje de tiro es
+matemáticamente indefinido si el jugador nunca intentó ese tipo de tiro), no
+un error de captura. Esta sección documenta tanto la completitud básica como
+un conjunto de verificaciones de integridad específicas del dominio
+baloncestístico.
+
+```{r calidad}
+n_filas <- nrow(df)
+n_cols <- ncol(df)
+
+nulos_por_variable <- colSums(is.na(df))
+total_nulos <- sum(nulos_por_variable)
+
+duplicados_completos <- sum(duplicated(df))
+duplicados_clave <- sum(duplicated(df[, c("temporada", "jugador", "equipo")]))
+
+resumen_calidad <- tibble(
+  Indicador = c(
+    "Número de filas (registros temporada-jugador)",
+    "Número de columnas (variables)",
+    "Total de valores nulos (NA) en todo el dataset",
+    "Filas completamente duplicadas",
+    "Combinaciones (temporada, jugador, equipo) duplicadas"
+  ),
+  Valor = c(
+    comma(n_filas),
+    n_cols,
+    comma(total_nulos),
+    duplicados_completos,
+    duplicados_clave
+  )
+)
+
+resumen_calidad %>%
+  kable() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed")
+  )
+```
+
+```{r nulos_detalle}
+tibble(
+  Variable = names(nulos_por_variable),
+  Nulos = as.numeric(nulos_por_variable),
+  Porcentaje = percent(Nulos / n_filas, accuracy = 0.1)
+) %>%
+  filter(Nulos > 0) %>%
+  arrange(desc(Nulos)) %>%
+  kable(caption = "Variables con valores nulos (NA)") %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  )
+```
+
+**¿Por qué hay valores nulos?** Todas las columnas con `NA` son
+**porcentajes de tiro o de posesión**: `porc_triple` (2,623 NA, 14.8%),
+`porc_libre` (576 NA), `porc_doble` (106 NA), `porc_tiro_efectivo` /
+`porc_tiro_verdadero` / `porc_intentos_triple` / `razon_libres_intentos`
+(hasta 63 NA cada una) y unas pocas variables avanzadas
+(`indice_eficiencia`, `victorias_por_48min`,
+`porc_rebotes_of_disp` ... `porc_uso_jugador`, 3 NA cada una). La causa es
+siempre la misma: un porcentaje es matemáticamente **0/0 = indefinido**
+cuando el jugador no intentó ningún tiro de ese tipo en la temporada (por
+ejemplo, un pívot que nunca lanzó un triple tiene `porc_triple = NA`, no
+`0`). No son errores de carga ni datos faltantes por un problema de
+recolección, sino ausencias **estructuralmente correctas**. Por esta razón,
+en la sección de matriz de correlación se usa una estrategia de correlación
+por pares (`pairwise.complete.obs`) en lugar de eliminar por caso completo,
+para no descartar miles de filas válidas solo por una columna de porcentaje
+irrelevante para ese jugador.
+
+```{r integridad-especifica}
+gs_mayor_g <- sum(df$partidos_titular > df$partidos_jugados)
+g_mayor_82 <- df %>% filter(partidos_jugados > 82)
+tot_rows <- sum(df$equipo == "TOT")
+
+tibble(
+  Verificación = c(
+    "Partidos como titular (partidos_titular) nunca mayor que partidos jugados (partidos_jugados)",
+    "Partidos jugados (partidos_jugados) dentro del máximo de una temporada regular (≤ 82)",
+    "Filas con código de equipo \"TOT\" (resumen de jugador transferido)"
+  ),
+  Resultado = c(
+    ifelse(gs_mayor_g == 0, "Se cumple en el 100% de las filas", paste(gs_mayor_g, "excepciones")),
+    paste0(nrow(g_mayor_82), " filas superan 82 (", round(100 * nrow(g_mayor_82) / n_filas, 2), "% del total)"),
+    comma(tot_rows)
+  )
+) %>%
+  kable() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  )
+```
+
+Dos hallazgos merecen explicación, no son errores:
+
+1. **Las `r nrow(g_mayor_82)` filas con más de 82 partidos jugados
+   corresponden exclusivamente a filas `"TOT"`** (jugadores transferidos a
+   mitad de temporada). Esto es coherente con la forma en que
+   Basketball-Reference construye esa fila-resumen cuando hay partidos
+   reprogramados alrededor de la fecha de traspaso, y no representa un error
+   de carga.
+2. Existe **1 combinación duplicada de (temporada, jugador, equipo)**:
+   dos jugadores reales llamados *Charles Jones* jugaron en los Washington
+   Bullets (`WSB`) en la temporada 1989. No es un duplicado accidental, sino
+   una coincidencia real de nombres — un recordatorio de que `jugador` es un
+   identificador de **texto libre**, no una clave garantizada única, algo
+   común en datasets deportivos históricos.
+
+**Conclusión de calidad de datos:** el dataset presenta una **buena
+integridad estructural**: no hay filas completamente duplicadas, las
+verificaciones lógicas de dominio (`partidos_titular ≤ partidos_jugados`) se
+cumplen sin excepción, y el único patrón de valores nulos corresponde a
+porcentajes matemáticamente indefinidos por cero intentos, con una causa
+clara y documentable — no a errores de captura.
+
+# Clasificación de las variables
+
+Para saber qué herramienta estadística aplicar a cada columna, se clasifican
+todas las variables en cinco grupos: identificador, categóricas, numéricas
+discretas, numéricas continuas y booleanas.
+
+```{r separacion-tipos}
+vars_categoricas <- c("posicion", "equipo")
+
+vars_discretas <- c("temporada", "edad", "partidos_jugados", "partidos_titular", "minutos_totales")
+
+vars_numericas <- df %>%
+  select(where(is.numeric), -jugador) %>%
+  names()
+
+vars_continuas <- setdiff(vars_numericas, vars_discretas)
+
+vars_booleanas <- character(0)
+
+tibble(
+  Tipo = c(
+    "Identificador",
+    "Categóricas",
+    "Numéricas discretas (conteos/temporales)",
+    "Numéricas continuas",
+    "Booleanas"
+  ),
+  Cantidad = c(
+    1,
+    length(vars_categoricas),
+    length(vars_discretas),
+    length(vars_continuas),
+    length(vars_booleanas)
+  ),
+  Variables = c(
+    "jugador",
+    paste(vars_categoricas, collapse = ", "),
+    paste(vars_discretas, collapse = ", "),
+    paste(vars_continuas, collapse = ", "),
+    "(ninguna — el dataset no contiene indicadores Sí/No o 0/1)"
+  )
+) %>%
+  kable() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed")
+  )
+```
+
+A diferencia de otros datasets de este proyecto (que sí incluían variables
+binarias 0/1 recodificadas como Sí/No), **`NBA_espanol.csv` no contiene
+ninguna variable booleana**: todas las columnas son identificador, categoría
+de texto, o cantidades numéricas (conteos, tasas o porcentajes). Para
+efectos del análisis de correlación más adelante, `vars_numericas` agrupa
+tanto las discretas como las continuas (`r length(vars_numericas)`
+variables en total), ya que todas ellas son cuantitativas.
+
+# Análisis univariado de variables numéricas
+
+Cada una de las `r length(vars_numericas)` variables numéricas del dataset
+se analiza de forma individual mediante estadísticas descriptivas
+(media, mediana, desviación estándar, mínimo, máximo, asimetría y número de
+NA) y visualizaciones (histograma y boxplot).
+
+Para mantener el documento legible, se distinguen dos niveles de
+profundidad:
+
+- **8 variables "destacadas"** (edad, partidos jugados, minutos por
+  partido, puntos por partido, rebotes totales, asistencias, PER y Win
+  Shares totales), con una interpretación extensa escrita a mano, por ser
+  las de mayor relevancia directa para un analista deportivo.
+- **El resto de las `r length(vars_numericas) - 8` variables numéricas**,
+  analizadas de forma sistemática con el mismo tipo de tabla y gráficos,
+  acompañadas de una interpretación generada automáticamente a partir de su
+  descripción en el diccionario de datos y de sus estadísticos (asimetría,
+  NA).
+
+```{r tabla-stats-funcion}
+tabla_stats <- function(x) {
+  tibble(
+    Media = mean(x, na.rm = TRUE),
+    Mediana = median(x, na.rm = TRUE),
+    Desviacion_Estandar = sd(x, na.rm = TRUE),
+    Minimo = min(x, na.rm = TRUE),
+    Maximo = max(x, na.rm = TRUE),
+    Asimetria = e1071::skewness(x, na.rm = TRUE, type = 2),
+    NAs = sum(is.na(x))
+  )
+}
+
+nombres_stats <- c(
+  "Media", "Mediana", "Desviación estándar", "Mínimo", "Máximo",
+  "Asimetría", "Valores NA"
+)
+```
+
+## 1. Edad del jugador
+
+La variable `edad` representa la edad del jugador durante esa temporada.
+
+```{r edad}
+x <- df$edad
+
+tabla_stats(x) %>%
+  kable(digits = 2, col.names = nombres_stats) %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+```{r edad-grafico}
+ggplot(df, aes(x = edad)) +
+  geom_histogram(bins = 27, fill = "#2C7FB8", color = "white") +
+  labs(
+    title = "Distribución de la edad de los jugadores",
+    x = "Edad (años)", y = "Número de registros temporada-jugador"
+  ) +
+  theme_minimal()
+```
+
+```{r edad-boxplot}
+ggplot(df, aes(y = edad)) +
+  geom_boxplot(fill = "#41B6C4", outlier.color = "firebrick") +
+  labs(title = "Dispersión de la edad de los jugadores", y = "Edad (años)") +
+  theme_minimal()
+```
+
+**Interpretación académica:**
+El rango de edad (18 a 44 años) refleja la curva de carrera típica de un
+jugador de la NBA: entra a la liga entre los 19 y 22 años y la mayoría se
+retira antes de los 35. Los boxplot muestran como *outliers* superiores a
+jugadores con carreras excepcionalmente longevas. Esta variable es clave
+para estudios de curva de rendimiento por edad (¿a qué edad se alcanza el
+pico estadístico?) y para contextualizar métricas de proyección de carrera.
+
+---
+
+## 2. Partidos jugados en la temporada
+
+La variable `partidos_jugados` representa el número de partidos jugados por
+el jugador en esa temporada.
+
+```{r partidos}
+x <- df$partidos_jugados
+
+tabla_stats(x) %>%
+  kable(digits = 2, col.names = nombres_stats) %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+```{r partidos-grafico}
+ggplot(df, aes(x = partidos_jugados)) +
+  geom_histogram(bins = 30, fill = "#2C7FB8", color = "white") +
+  labs(
+    title = "Distribución de partidos jugados en la temporada",
+    x = "Partidos jugados", y = "Número de registros"
+  ) +
+  theme_minimal()
+```
+
+```{r partidos-boxplot}
+ggplot(df, aes(y = partidos_jugados)) +
+  geom_boxplot(fill = "#41B6C4", outlier.color = "firebrick") +
+  labs(title = "Dispersión de partidos jugados en la temporada", y = "Partidos jugados") +
+  theme_minimal()
+```
+
+**Interpretación académica:**
+La distribución de `partidos_jugados` es marcadamente **bimodal/asimétrica
+hacia la izquierda**: hay una gran concentración de jugadores que disputan
+prácticamente toda la temporada (cerca de 82 partidos) y otra masa
+importante de jugadores con participación baja (roster marginal, lesiones o
+llamados breves desde ligas menores). Esta variable es fundamental como
+**filtro de calidad muestral** para el resto del análisis: las métricas de
+tasa (`indice_eficiencia`, `victorias_por_48min`, `masmenos_total`) son
+mucho más ruidosas y volátiles en jugadores con pocos partidos/minutos, un
+punto que se retoma en la sección 7.
+
+---
+
+## 3. Minutos jugados por partido
+
+La variable `minutos_pp` representa el promedio de minutos jugados por
+partido.
+
+```{r minutos}
+x <- df$minutos_pp
+
+tabla_stats(x) %>%
+  kable(digits = 2, col.names = nombres_stats) %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+```{r minutos-grafico}
+ggplot(df, aes(x = minutos_pp)) +
+  geom_histogram(bins = 30, fill = "#2C7FB8", color = "white") +
+  labs(
+    title = "Distribución de minutos jugados por partido",
+    x = "Minutos por partido", y = "Número de registros"
+  ) +
+  theme_minimal()
+```
+
+```{r minutos-boxplot}
+ggplot(df, aes(y = minutos_pp)) +
+  geom_boxplot(fill = "#41B6C4", outlier.color = "firebrick") +
+  labs(title = "Dispersión de minutos jugados por partido", y = "Minutos por partido") +
+  theme_minimal()
+```
+
+**Interpretación académica:**
+Los minutos por partido son el mejor proxy de la **confianza del cuerpo
+técnico** en un jugador: refleja tanto su nivel como su rol dentro del
+equipo (titular consolidado, rotación o suplente marginal). Es una variable
+central en el análisis multivariado porque casi todas las estadísticas "por
+partido" (puntos, rebotes, asistencias) dependen mecánicamente de cuántos
+minutos tiene el jugador para producirlas — una correlación que se confirma
+cuantitativamente en la sección de matriz de correlación.
+
+---
+
+## 4. Puntos por partido
+
+La variable `puntos_pp` representa el promedio de puntos anotados por
+partido.
+
+```{r puntos}
+x <- df$puntos_pp
+
+tabla_stats(x) %>%
+  kable(digits = 2, col.names = nombres_stats) %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+```{r puntos-grafico}
+ggplot(df, aes(x = puntos_pp)) +
+  geom_histogram(bins = 30, fill = "#2C7FB8", color = "white") +
+  labs(
+    title = "Distribución de puntos por partido",
+    x = "Puntos por partido", y = "Número de registros"
+  ) +
+  theme_minimal()
+```
+
+```{r puntos-boxplot}
+ggplot(df, aes(y = puntos_pp)) +
+  geom_boxplot(fill = "#41B6C4", outlier.color = "firebrick") +
+  labs(title = "Dispersión de puntos por partido", y = "Puntos por partido") +
+  theme_minimal()
+```
+
+**Interpretación académica:**
+`puntos_pp` es la estadística ofensiva más visible y mediática, pero también
+una de las más sesgadas a la derecha: la mayoría de los jugadores promedian
+pocos puntos (roles de rotación/defensivos) mientras que una minoría de
+anotadores estrella se aleja mucho de la mediana, generando los *outliers*
+superiores visibles en el boxplot. Estos valores extremos no son errores:
+corresponden a temporadas históricas de anotadores élite. Este indicador
+debe interpretarse junto con la eficiencia de tiro (`porc_tiro_campo`,
+`porc_tiro_verdadero`) y no de forma aislada, ya que un alto volumen de
+puntos con baja eficiencia no siempre representa valor neto para el equipo.
+
+---
+
+## 5. Rebotes por partido
+
+La variable `rebotes_totales_pp` representa el promedio de rebotes totales
+(ofensivos + defensivos) capturados por partido.
+
+```{r rebotes}
+x <- df$rebotes_totales_pp
+
+tabla_stats(x) %>%
+  kable(digits = 2, col.names = nombres_stats) %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+```{r rebotes-grafico}
+ggplot(df, aes(x = rebotes_totales_pp)) +
+  geom_histogram(bins = 30, fill = "#2C7FB8", color = "white") +
+  labs(
+    title = "Distribución de rebotes totales por partido",
+    x = "Rebotes por partido", y = "Número de registros"
+  ) +
+  theme_minimal()
+```
+
+```{r rebotes-boxplot}
+ggplot(df, aes(y = rebotes_totales_pp)) +
+  geom_boxplot(fill = "#41B6C4", outlier.color = "firebrick") +
+  labs(title = "Dispersión de rebotes totales por partido", y = "Rebotes por partido") +
+  theme_minimal()
+```
+
+**Interpretación académica:**
+El rebote es una de las estadísticas más asociadas a la **posición de
+juego**: pívots y aleros-pívot dominan la parte alta de la distribución,
+mientras que bases y escoltas se concentran en valores bajos. Por
+construcción, `rebotes_totales_pp` es la suma exacta de `rebotes_of_pp` y
+`rebotes_def_pp` (verificado en la sección de matriz de correlación), por lo
+que no aporta información independiente de esas dos componentes — es útil
+como resumen, pero el desglose ofensivo/defensivo revela mejor el estilo de
+juego del jugador.
+
+---
+
+## 6. Asistencias por partido
+
+La variable `asistencias_pp` representa el promedio de asistencias por
+partido.
+
+```{r asistencias}
+x <- df$asistencias_pp
+
+tabla_stats(x) %>%
+  kable(digits = 2, col.names = nombres_stats) %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+```{r asistencias-grafico}
+ggplot(df, aes(x = asistencias_pp)) +
+  geom_histogram(bins = 30, fill = "#2C7FB8", color = "white") +
+  labs(
+    title = "Distribución de asistencias por partido",
+    x = "Asistencias por partido", y = "Número de registros"
+  ) +
+  theme_minimal()
+```
+
+```{r asistencias-boxplot}
+ggplot(df, aes(y = asistencias_pp)) +
+  geom_boxplot(fill = "#41B6C4", outlier.color = "firebrick") +
+  labs(title = "Dispersión de asistencias por partido", y = "Asistencias por partido") +
+  theme_minimal()
+```
+
+**Interpretación académica:**
+Las asistencias son el indicador clásico de creación de juego y suelen
+concentrarse en bases y jugadores con responsabilidad de manejo de balón,
+generando una fuerte asimetría a la derecha similar a la de los puntos. Los
+valores extremos superiores del boxplot corresponden a temporadas de bases
+especializados en el pase; los valores cercanos a 0 son esperables en
+pívots tradicionales cuyo rol ofensivo no incluye la distribución del
+balón.
+
+---
+
+## 7. Eficiencia del jugador (PER)
+
+La variable `indice_eficiencia` (*Player Efficiency Rating*) es un índice
+compuesto que resume en un solo número la producción del jugador por
+minuto, ajustada por el ritmo de juego de su equipo; la liga se centra en
+15.0 por construcción.
+
+```{r per}
+x <- df$indice_eficiencia
+
+tabla_stats(x) %>%
+  kable(digits = 2, col.names = nombres_stats) %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+```{r per-grafico}
+ggplot(df, aes(x = indice_eficiencia)) +
+  geom_histogram(bins = 40, fill = "#2C7FB8", color = "white") +
+  labs(
+    title = "Distribución del Player Efficiency Rating (PER)",
+    x = "PER", y = "Número de registros"
+  ) +
+  theme_minimal()
+```
+
+```{r per-boxplot}
+ggplot(df, aes(y = indice_eficiencia)) +
+  geom_boxplot(fill = "#41B6C4", outlier.color = "firebrick") +
+  labs(title = "Dispersión del Player Efficiency Rating (PER)", y = "PER") +
+  theme_minimal()
+```
+
+**Interpretación académica:**
+Como se diseñó para que la liga promedie 15.0, la media observada
+(`r round(mean(df$indice_eficiencia, na.rm = TRUE), 2)`) confirma que la
+escala se comporta como se espera. Sin embargo, el boxplot muestra
+**numerosos outliers en ambos extremos**, incluyendo valores muy negativos:
+esto no indica jugadores "terribles" en un sentido absoluto, sino el efecto
+de **muestras pequeñas**. Un jugador con solo unos pocos minutos jugados en
+toda la temporada (ver la sección 2, `partidos_jugados`) puede tener un PER
+extremadamente volátil — un solo mal cuarto de hora puede arrastrar el
+índice a valores muy negativos, y viceversa. Por eso, cualquier análisis
+serio que use `indice_eficiencia` (o métricas de tasa similares como
+`victorias_por_48min`, `masmenos_ofensivo`, `masmenos_defensivo`,
+`masmenos_total`) debería filtrar previamente por un mínimo razonable de
+minutos o partidos jugados (por ejemplo `minutos_totales > 500` o
+`partidos_jugados >= 20`) para evitar que jugadores marginales con muestras
+diminutas distorsionen las conclusiones.
+
+---
+
+## 8. Win Shares (valor total del jugador)
+
+La variable `victorias_total` (*Win Shares*) estima el número de victorias
+del equipo atribuibles a la contribución total (ofensiva + defensiva) del
+jugador en esa temporada.
+
+```{r ws}
+x <- df$victorias_total
+
+tabla_stats(x) %>%
+  kable(digits = 2, col.names = nombres_stats) %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+```{r ws-grafico}
+ggplot(df, aes(x = victorias_total)) +
+  geom_histogram(bins = 40, fill = "#2C7FB8", color = "white") +
+  labs(
+    title = "Distribución de Win Shares (victorias_total)",
+    x = "Win Shares", y = "Número de registros"
+  ) +
+  theme_minimal()
+```
+
+```{r ws-boxplot}
+ggplot(df, aes(y = victorias_total)) +
+  geom_boxplot(fill = "#41B6C4", outlier.color = "firebrick") +
+  labs(title = "Dispersión de Win Shares (victorias_total)", y = "Win Shares") +
+  theme_minimal()
+```
+
+**Interpretación académica:**
+A diferencia de `indice_eficiencia` (una tasa por minuto), `victorias_total`
+es una métrica **acumulativa**: depende tanto de la eficiencia del jugador
+como de cuántos minutos jugó, por lo que está mucho menos distorsionada por
+muestras pequeñas (un jugador con pocos minutos simplemente acumula pocos
+Win Shares, en lugar de un valor extremo). Los outliers superiores del
+boxplot representan temporadas MVP-caliber; los pocos valores negativos son
+jugadores cuya contribución neta, según el modelo, restó victorias al
+equipo. `victorias_total` es, junto con `valor_sobre_reemplazo`, de las
+métricas más usadas para comparar valor entre jugadores de distintos roles y
+volumen de minutos.
+
+---
+
+## Resto de variables numéricas
+
+Las `r length(vars_numericas) - 8` variables numéricas restantes se
+analizan a continuación de forma sistemática: para cada una se muestra su
+descripción (tomada del diccionario de datos), la tabla de estadísticos,
+histograma y boxplot lado a lado, y una interpretación generada a partir de
+su asimetría y su proporción de valores NA.
+
+```{r interpretacion-funcion}
+interpretar_numerica <- function(v) {
+  x <- df[[v]]
+  desc <- diccionario$Descripcion_academica[diccionario$Variable == v]
+  n_na <- sum(is.na(x))
+  sk <- suppressWarnings(e1071::skewness(x, na.rm = TRUE, type = 2))
+
+  forma <- case_when(
+    is.na(sk) ~ "no pudo estimarse por datos insuficientes",
+    abs(sk) < 0.5 ~ "una distribución aproximadamente simétrica",
+    sk >= 0.5 & sk < 1 ~ "una asimetría moderada hacia la derecha (cola de valores altos)",
+    sk <= -0.5 & sk > -1 ~ "una asimetría moderada hacia la izquierda (cola de valores bajos)",
+    sk >= 1 ~ "una asimetría fuerte hacia la derecha: la mayoría de registros se concentra en valores bajos y una minoría se aleja mucho hacia arriba",
+    sk <= -1 ~ "una asimetría fuerte hacia la izquierda: la mayoría de registros se concentra en valores altos y una minoría se aleja mucho hacia abajo",
+    TRUE ~ "una forma que no encaja en las categorías estándar de asimetría"
+  )
+
+  nota_na <- if (n_na > 0) {
+    paste0(
+      " Presenta ", comma(n_na), " valores NA (",
+      percent(n_na / nrow(df), accuracy = 0.1),
+      "), consistentes con el patrón estructural de porcentajes 0/0 ",
+      "documentado en la sección de calidad de datos."
+    )
+  } else {
+    ""
+  }
+
+  paste0(
+    desc, " Estadísticamente presenta ", forma,
+    " (asimetría = ", round(sk, 2), ").", nota_na
+  )
+}
+```
+
+```{r loop-numericas, results='asis', fig.width=10, fig.height=3.6}
+vars_destacadas <- c(
+  "edad", "partidos_jugados", "minutos_pp", "puntos_pp",
+  "rebotes_totales_pp", "asistencias_pp", "indice_eficiencia", "victorias_total"
+)
+vars_restantes <- setdiff(vars_numericas, vars_destacadas)
+
+for (v in vars_restantes) {
+
+  etiqueta <- etiquetas_num[[v]]
+
+  cat("\n\n### ", etiqueta, " (`", v, "`)\n\n", sep = "")
+
+  x <- df[[v]]
+
+  print(
+    tabla_stats(x) %>%
+      kable(digits = 3, col.names = nombres_stats) %>%
+      kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+  )
+
+  p_hist <- ggplot(df, aes(x = .data[[v]])) +
+    geom_histogram(bins = 30, fill = "#2C7FB8", color = "white", na.rm = TRUE) +
+    labs(title = paste("Distribución:", etiqueta), x = etiqueta, y = "Frecuencia") +
+    theme_minimal(base_size = 10)
+
+  p_box <- ggplot(df, aes(y = .data[[v]])) +
+    geom_boxplot(fill = "#41B6C4", outlier.color = "firebrick", na.rm = TRUE) +
+    labs(title = paste("Dispersión:", etiqueta), y = etiqueta) +
+    theme_minimal(base_size = 10)
+
+  print(p_hist + p_box)
+
+  cat("\n\n**Interpretación:** ", interpretar_numerica(v), "\n\n", sep = "")
+}
+```
+
+---
+
+## Resumen numérico consolidado
+
+A continuación se presenta un resumen numérico completo de **todas** las
+variables numéricas (incluidas las ocho analizadas en detalle), útil como
+tabla de referencia única.
+
+```{r resumen-numerico}
+map_dfr(vars_numericas, function(v) {
+  bind_cols(Variable = v, tabla_stats(df[[v]]))
+}) %>%
+  kable(digits = 2, col.names = c("Variable", nombres_stats), caption = "Resumen numérico de todas las variables numéricas") %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    font_size = 11
+  )
+```
+
+---
+
+# Análisis univariado de variables categóricas
+
+Para las variables categóricas no se calculan promedios ni desviaciones
+estándar; en su lugar se analiza la **frecuencia y el peso relativo (%)** de
+cada categoría, apoyado en un gráfico de barras ordenado de mayor a menor.
+
+```{r funciones-categoricas}
+etiquetas_cat <- c(
+  posicion = "Posición de juego",
+  equipo = "Equipo / franquicia"
+)
+
+contexto_cat <- c(
+  posicion = "permite comparar perfiles estadísticos por rol dentro de la cancha (bases, aleros, pívots y combinaciones híbridas modernas).",
+  equipo = "muestra qué franquicias concentran más temporadas-jugador en el dataset y refleja 41 temporadas de historia de la NBA, incluyendo reubicaciones y cambios de nombre de franquicias."
+)
+
+nota_extra_cat <- c(
+  posicion = paste0(
+    "Nótese que varias combinaciones híbridas (por ejemplo \"PG-SF\" o ",
+    "\"SG-PG-SF\") tienen muy pocos casos: son asignaciones de posición ",
+    "ponderadas por minutos que Basketball-Reference otorga a jugadores ",
+    "verdaderamente multi-posicionales, y no deben interpretarse como ",
+    "categorías con el mismo peso estadístico que \"C\", \"PF\", \"SF\", ",
+    "\"SG\" o \"PG\"."
+  ),
+  equipo = paste0(
+    "El código **\"TOT\"** (fila-resumen para jugadores transferidos a ",
+    "mitad de temporada) es, por sí solo, uno de los \"equipos\" más ",
+    "frecuentes del dataset — no corresponde a una franquicia real y debe ",
+    "excluirse (o tratarse aparte) en cualquier análisis agregado por ",
+    "equipo, para no duplicar minutos/partidos ya contabilizados en las ",
+    "filas de cada equipo individual. El resto de la alta cardinalidad ",
+    "(41 códigos) refleja la historia de reubicaciones y cambios de ",
+    "nombre de la liga: por ejemplo SEA (Seattle SuperSonics) pasó a ser ",
+    "OKC (Oklahoma City) en 2008; VAN (Vancouver Grizzlies) a MEM ",
+    "(Memphis) en 2001; WSB (Washington Bullets) a WAS (Wizards) en ",
+    "1997; y la franquicia de Charlotte aparece como CHH, luego CHA y ",
+    "finalmente CHO tras dos reubicaciones/cambios de nombre."
+  )
+)
+
+grafico_categorico <- function(v, etiqueta, top_n = 20) {
+
+  tabla_frec <- df %>%
+    count(.data[[v]], name = "n") %>%
+    mutate(pct = n / sum(n) * 100) %>%
+    arrange(desc(n)) %>%
+    head(top_n)
+
+  niveles_orden <- tabla_frec[[v]]
+
+  ggplot(
+    tabla_frec,
+    aes(x = factor(.data[[v]], levels = rev(niveles_orden)), y = n)
+  ) +
+    geom_col(fill = "#F0B84B", color = "white", alpha = 0.95) +
+    geom_text(
+      aes(label = paste0(comma(n), " (", round(pct, 1), "%)")),
+      hjust = -0.05, size = 3
+    ) +
+    coord_flip() +
+    labs(
+      title = paste("Distribución de", etiqueta, if (top_n < 100) paste0("(top ", top_n, ")") else ""),
+      x = NULL, y = "Número de registros"
+    ) +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.2))) +
+    theme_minimal(base_size = 11)
+}
+```
+
+```{r loop-categoricas, results='asis', fig.height=7}
+for (v in vars_categoricas) {
+
+  etiqueta <- etiquetas_cat[[v]]
+
+  cat("\n\n## ", etiqueta, " (`", v, "`)\n\n", sep = "")
+
+  tabla_frec <- df %>%
+    count(.data[[v]], name = "Frecuencia") %>%
+    mutate(Porcentaje = percent(Frecuencia / sum(Frecuencia), accuracy = 0.1)) %>%
+    arrange(desc(Frecuencia))
+
+  tabla_mostrar <- if (nrow(tabla_frec) > 15) head(tabla_frec, 15) else tabla_frec
+
+  print(
+    kable(tabla_mostrar, col.names = c(etiqueta, "Frecuencia", "% del total")) %>%
+      kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+  )
+
+  print(grafico_categorico(v, etiqueta))
+
+  n_categorias <- nrow(tabla_frec)
+  categoria_top <- as.character(tabla_frec[[v]][1])
+  pct_top <- percent(tabla_frec$Frecuencia[1] / sum(tabla_frec$Frecuencia), accuracy = 0.1)
+
+  cat(
+    "\n\n**Lectura académica:** la variable *", etiqueta, "* tiene **",
+    n_categorias, "** categorías distintas. La categoría más frecuente es **",
+    categoria_top, "**, con **", pct_top, "** del total de registros. ",
+    contexto_cat[[v]], "\n\n",
+    sep = ""
+  )
+
+  cat(nota_extra_cat[[v]], "\n\n")
+}
+```
+
+---
+
+# Matriz de correlación
+
+Las variables numéricas de este dataset se encuentran en escalas muy
+distintas: `edad` va de 18 a 44, `porc_uso_jugador` de 0 a 100,
+`minutos_totales` puede superar 3,000, y varias métricas avanzadas
+(`victorias_ofensiva`, `masmenos_total`, `margen_victoria`) son valores
+pequeños que pueden ser negativos. La **correlación de Pearson** es, por
+definición, invariante a la escala y a los cambios de unidad de cada
+variable (a diferencia de la covarianza, que sí depende de la escala), por
+lo que se calcula directamente sobre las variables originales, sin
+necesidad de estandarizarlas primero. La estandarización sí sería
+indispensable para otras técnicas multivariadas (por ejemplo, PCA o
+clustering basado en distancias), pero no para esta matriz.
+
+**Nota metodológica sobre los NA:** como se documentó en la sección de
+calidad de datos, varias columnas de porcentaje tienen NA estructurales
+(0 intentos). Usar `cor(..., use = "complete.obs")` (eliminación por caso
+completo) descartaría cualquier fila con **al menos una** de esas columnas
+en NA — en la práctica, miles de filas, solo porque, por ejemplo, un pívot
+nunca intentó un triple. Por eso aquí se usa
+`cor(..., use = "pairwise.complete.obs")`, que calcula cada correlación par
+a par usando todas las observaciones disponibles para ese par específico de
+variables, preservando la mayor cantidad de información posible.
+
+```{r calculo-correlacion}
+datos_numericos <- df %>%
+  select(all_of(vars_numericas))
+
+matriz_correlacion <- cor(
+  datos_numericos,
+  use = "pairwise.complete.obs"
+)
+```
+
+## Panorama general (todas las variables)
+
+Con `r length(vars_numericas)` variables, una matriz completa con los
+valores impresos en cada celda es ilegible. Por eso, el mapa de calor
+general se ordena mediante **clustering jerárquico** (agrupando variables
+con patrones de correlación similares) y se usa solo el color para mostrar
+la magnitud y el signo de cada relación; el detalle numérico de las
+variables más relevantes se muestra en la sección siguiente.
+
+```{r matriz-correlacion-completa, fig.width=19, fig.height=16}
+orden_cluster <- hclust(as.dist(1 - abs(matriz_correlacion)))$order
+niveles_orden <- rownames(matriz_correlacion)[orden_cluster]
+
+cor_long <- as.data.frame(matriz_correlacion) %>%
+  mutate(Variable1 = rownames(.)) %>%
+  pivot_longer(cols = -Variable1, names_to = "Variable2", values_to = "Correlacion") %>%
+  mutate(
+    Variable1 = factor(Variable1, levels = niveles_orden),
+    Variable2 = factor(Variable2, levels = niveles_orden)
+  )
+
+ggplot(cor_long, aes(x = Variable1, y = Variable2, fill = Correlacion)) +
+  geom_tile() +
+  scale_fill_gradient2(
+    low = "#2166AC", mid = "white", high = "#B2182B",
+    midpoint = 0, limits = c(-1, 1)
+  ) +
+  labs(
+    title = "Matriz de correlación de todas las variables numéricas",
+    subtitle = paste0(
+      length(vars_numericas), " variables, ordenadas por clustering jerárquico — ",
+      "cálculo por pares (pairwise.complete.obs)"
+    ),
+    x = NULL, y = NULL, fill = "Correlación"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 6.5),
+    axis.text.y = element_text(size = 6.5)
+  )
+```
+
+## Detalle numérico: variables clave
+
+Este segundo mapa de calor se limita a un subconjunto de **20 variables
+clave** (uso, producción, eficiencia y resultado de equipo) y sí imprime el
+coeficiente de correlación en cada celda, para poder leer valores exactos.
+
+```{r matriz-correlacion-clave, fig.width=11, fig.height=9.5}
+vars_clave_corr <- c(
+  "edad", "partidos_jugados", "minutos_pp", "puntos_pp",
+  "rebotes_totales_pp", "asistencias_pp", "robos_pp", "tapones_pp",
+  "perdidas_pp", "porc_tiro_campo", "porc_triple", "porc_libre",
+  "porc_tiro_verdadero", "porc_uso_jugador", "indice_eficiencia",
+  "victorias_total", "masmenos_total", "valor_sobre_reemplazo",
+  "margen_victoria", "porc_victorias_equipo"
+)
+
+matriz_clave <- cor(
+  df %>% select(all_of(vars_clave_corr)),
+  use = "pairwise.complete.obs"
+)
+
+orden_cluster_clave <- hclust(as.dist(1 - abs(matriz_clave)))$order
+niveles_clave <- rownames(matriz_clave)[orden_cluster_clave]
+
+cor_clave_long <- as.data.frame(matriz_clave) %>%
+  mutate(Variable1 = rownames(.)) %>%
+  pivot_longer(cols = -Variable1, names_to = "Variable2", values_to = "Correlacion") %>%
+  mutate(
+    Variable1 = factor(Variable1, levels = niveles_clave),
+    Variable2 = factor(Variable2, levels = niveles_clave)
+  )
+
+ggplot(cor_clave_long, aes(x = Variable1, y = Variable2, fill = Correlacion)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = sprintf("%.2f", Correlacion)), size = 2.6) +
+  scale_fill_gradient2(
+    low = "#2166AC", mid = "white", high = "#B2182B",
+    midpoint = 0, limits = c(-1, 1)
+  ) +
+  labs(
+    title = "Matriz de correlación — 20 variables clave",
+    subtitle = "Coeficientes de Pearson, cálculo por pares (pairwise.complete.obs)",
+    x = NULL, y = NULL, fill = "Correlación"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.text.y = element_text()
+  )
+```
+
+## Pares de variables con mayor y menor correlación
+
+```{r correlacion-pares}
+cor_pares_long <- as.data.frame(matriz_correlacion) %>%
+  mutate(Variable1 = rownames(.)) %>%
+  pivot_longer(cols = -Variable1, names_to = "Variable2", values_to = "Correlacion") %>%
+  filter(Variable1 != Variable2) %>%
+  mutate(
+    par_id = map2_chr(Variable1, Variable2, ~ paste(sort(c(.x, .y)), collapse = " -- "))
+  ) %>%
+  distinct(par_id, .keep_all = TRUE) %>%
+  select(Variable1, Variable2, Correlacion) %>%
+  arrange(desc(abs(Correlacion)))
+
+top15_cor <- head(cor_pares_long, 15)
+bottom5_cor <- cor_pares_long %>% arrange(abs(Correlacion)) %>% head(5)
+
+top15_cor %>%
+  kable(
+    digits = 4,
+    col.names = c("Variable 1", "Variable 2", "Correlación (Pearson)"),
+    caption = "Los 15 pares de variables con mayor correlación en valor absoluto"
+  ) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE)
+```
+
+```{r correlacion-pares-bottom}
+bottom5_cor %>%
+  kable(
+    digits = 4,
+    col.names = c("Variable 1", "Variable 2", "Correlación (Pearson)"),
+    caption = "Los 5 pares de variables con menor correlación en valor absoluto (más cercanos a 0)"
+  ) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE)
+```
+
+```{r correlacion-identidades}
+diff_ws <- max(abs(df$victorias_total - (df$victorias_ofensiva + df$victorias_defensa)), na.rm = TRUE)
+diff_bpm <- max(abs(df$masmenos_total - (df$masmenos_ofensivo + df$masmenos_defensivo)), na.rm = TRUE)
+diff_trb <- max(abs(df$rebotes_totales_pp - (df$rebotes_of_pp + df$rebotes_def_pp)), na.rm = TRUE)
+diff_fga <- max(abs(df$tiros_intentados_pp - (df$dobles_intentados_pp + df$triples_intentados_pp)), na.rm = TRUE)
+
+cor_ptsfga <- cor(df$puntos_pp, df$tiros_intentados_pp, use = "complete.obs")
+cor_winmov <- cor(df$porc_victorias_equipo, df$margen_victoria, use = "complete.obs")
+```
+
+**Interpretación académica detallada:**
+
+A diferencia del análisis de un dataset sintético (donde todas las
+correlaciones resultaban prácticamente nulas), aquí la matriz muestra
+**relaciones fuertes, reales y con causas identificables**. Es fundamental
+distinguir entre tres tipos de relación que aparecen mezclados en la tabla
+de pares más fuertes:
+
+**1. Identidades matemáticas (no son "descubrimientos" empíricos).**
+Varias de las correlaciones más altas de toda la matriz no reflejan una
+relación estadística descubierta en los datos, sino una **relación de
+definición**, donde una variable es, por construcción, la suma de otras dos:
+
+- `victorias_total` = `victorias_ofensiva` + `victorias_defensa` — la
+  máxima diferencia observada entre ambos lados de la igualdad es de apenas
+  `r round(diff_ws, 3)` puntos (redondeo de publicación), confirmando que
+  son la misma cantidad expresada de dos formas.
+- `masmenos_total` = `masmenos_ofensivo` + `masmenos_defensivo` (diferencia
+  máxima `r round(diff_bpm, 3)`).
+- `rebotes_totales_pp` = `rebotes_of_pp` + `rebotes_def_pp` (diferencia
+  máxima `r round(diff_trb, 3)`).
+- `tiros_intentados_pp` = `dobles_intentados_pp` + `triples_intentados_pp`
+  (diferencia máxima `r round(diff_fga, 3)`).
+
+Que estos pares aparezcan con correlación cercana a 1 en el mapa de calor no
+aporta información nueva sobre el comportamiento de los jugadores: es
+esperable por álgebra, no por baloncesto. Un error común en analítica
+deportiva es interpretar este tipo de relación como un hallazgo, cuando en
+realidad es una tautología de las fórmulas usadas.
+
+**2. Relaciones de "volumen" (mecánicas, pero no idénticas).**
+El par con mayor correlación *no puramente definicional* es
+`r top15_cor$Variable1[1]` – `r top15_cor$Variable2[1]`
+(**r = `r round(top15_cor$Correlacion[1], 3)`**). Relaciones como
+`puntos_pp` – `tiros_anotados_pp`, `puntos_pp` – `tiros_intentados_pp`
+(r = `r round(cor_ptsfga, 3)`) o `minutos_totales` – `minutos_pp` son muy
+fuertes porque las estadísticas "por partido" comparten un componente común
+de **volumen de uso**: un jugador que intenta más tiros casi siempre anota
+más puntos, y un jugador con más minutos totales casi siempre tiene más
+minutos por partido. No son identidades algebraicas exactas (dependen de la
+eficiencia de tiro y del número de partidos jugados, respectivamente), pero
+sí relaciones altamente mecánicas y esperables.
+
+**3. Relaciones genuinamente empíricas (el hallazgo más interesante).**
+La relación entre `porc_victorias_equipo` y
+`margen_victoria`/`margen_victoria_ajust`
+(r = `r round(cor_winmov, 3)`) **sí es un hallazgo sustantivo del mundo
+real**, no una identidad de fórmula: el margen de victoria promedio de un
+equipo (cuántos puntos gana o pierde por partido, en promedio) predice casi
+perfectamente su porcentaje de victorias en la temporada. Esta es una
+versión del conocido **"Pythagorean expectation"** de la analítica
+deportiva (popularizado originalmente en béisbol por Bill James): equipos
+que dominan el marcador de forma consistente ganan más partidos de los que
+"deberían" según la intuición, porque las victorias ajustadas y el margen
+de puntos están mecánicamente ligados a través de miles de posesiones. Que
+esta relación emerja con tanta fuerza en un dataset a nivel de *jugador*
+(donde `margen_victoria`/`porc_victorias_equipo` son en realidad atributos
+del equipo, repetidos en cada fila de sus jugadores) confirma su robustez.
+
+**Pares más débiles.** En el otro extremo, el par con menor correlación
+absoluta de toda la matriz es
+`r bottom5_cor$Variable1[1]` – `r bottom5_cor$Variable2[1]`
+(**r = `r round(bottom5_cor$Correlacion[1], 4)`**), prácticamente nula. Esto
+es esperable: a diferencia de las estadísticas de producción (que comparten
+el componente de volumen/minutos), variables como la edad, la temporada o
+ciertos indicadores muy específicos de rol no tienen por qué moverse junto
+con el resto — confirma que la matriz no es "ruido estadístico" generalizado
+(como en un dataset sintético), sino que **discrimina correctamente entre
+pares relacionados y no relacionados**, que es justamente lo que se espera
+de datos reales con estructura.
+
+**Implicación práctica para el análisis:** antes de usar esta matriz para
+seleccionar variables en un modelo predictivo (por ejemplo, para predecir
+`victorias_total` o `indice_eficiencia`), es indispensable **excluir las
+identidades algebraicas** identificadas en el punto 1 (usar
+`victorias_ofensiva`/`victorias_defensa` en vez de `victorias_total`, o
+`masmenos_ofensivo`/`masmenos_defensivo` en vez de `masmenos_total`, pero no
+ambas capas a la vez) para evitar multicolinealidad perfecta o
+cuasi-perfecta, y tener presente que buena parte de la correlación restante
+refleja el componente común de "volumen de uso" (minutos, tiros intentados)
+más que relaciones de eficiencia independientes.
+
+---
+
+# Conclusiones generales
+
+- El dataset contiene **`r comma(n_filas)` registros temporada-jugador y
+  `r n_cols` variables** de la NBA entre 1982 y 2022, de las cuales
+  `r length(vars_numericas)` son numéricas (discretas y continuas),
+  `r length(vars_categoricas)` son categóricas (`posicion`, `equipo`), 1
+  (`jugador`) es un identificador, y **no hay variables booleanas** en este
+  dataset.
+- La calidad estructural de los datos es alta: no hay filas completamente
+  duplicadas, la regla lógica `partidos_titular ≤ partidos_jugados` se
+  cumple en el 100% de los casos, y el único patrón de valores nulos
+  (columnas de porcentaje) tiene una causa matemática clara (0 intentos),
+  no un problema de captura.
+- Las filas con código de equipo `"TOT"` (jugadores transferidos a mitad de
+  temporada) requieren tratamiento especial en cualquier análisis agregado
+  por equipo, para no duplicar minutos y partidos ya contados en las filas
+  de cada equipo individual.
+- Las métricas de **tasa por minuto** (`indice_eficiencia`,
+  `victorias_por_48min`, `masmenos_total` y similares) muestran una
+  dispersión y presencia de outliers muy influenciada por **tamaños de
+  muestra pequeños** (jugadores con pocos minutos/partidos); cualquier
+  análisis riguroso debería filtrar por un mínimo de minutos o partidos
+  jugados antes de comparar estas métricas entre jugadores.
+- La matriz de correlación reveló relaciones **fuertes y reales**, a
+  diferencia de los datasets sintéticos analizados previamente en este
+  proyecto. Es crucial distinguir entre **identidades matemáticas**
+  (`victorias_total = victorias_ofensiva + victorias_defensa`,
+  `masmenos_total = masmenos_ofensivo + masmenos_defensivo`,
+  `rebotes_totales_pp = rebotes_of_pp + rebotes_def_pp`,
+  `tiros_intentados_pp = dobles_intentados_pp + triples_intentados_pp`),
+  **relaciones mecánicas de volumen** (puntos vs. intentos de tiro, minutos
+  totales vs. minutos por partido) y **hallazgos genuinamente empíricos**
+  (el margen de victoria del equipo predice casi perfectamente su
+  porcentaje de victorias, una versión del *Pythagorean expectation* de la
+  analítica deportiva).
+- Un siguiente paso natural sería un análisis multivariado más profundo
+  (por ejemplo, PCA sobre las variables no redundantes, o un modelo de
+  regresión para `victorias_total`/`valor_sobre_reemplazo` usando solo
+  predictores independientes entre sí) y un análisis de evolución temporal
+  usando `temporada`, dado el rango de 41 temporadas que cubre el dataset
+  (por ejemplo, el aumento histórico de los intentos de triple, visible
+  indirectamente en `triples_intentados_pp` y `porc_intentos_triple`).
