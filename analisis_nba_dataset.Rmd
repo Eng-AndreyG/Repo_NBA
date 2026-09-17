@@ -149,13 +149,6 @@ con estadísticas tradicionales de caja (puntos, rebotes, asistencias, tiros de
 campo, etc.) y métricas avanzadas (PER, Win Shares, Box Plus/Minus, VORP,
 entre otras) publicadas originalmente por Basketball-Reference.
 
-A diferencia de los análisis previos de este proyecto (basados en datasets
-**sintéticos** de desempeño estudiantil), este es un dataset de **datos
-reales, observados y registrados de partidos efectivamente jugados**, lo que
-implica un tipo distinto de reto exploratorio: aquí sí es razonable esperar
-relaciones fuertes y significativas entre variables, algunas de ellas
-matemáticamente definidas y otras genuinamente empíricas — distinción que se
-aborda con detalle en la sección de matriz de correlación.
 
 El objetivo no es solo describir matemáticamente cada variable (media,
 mediana, desviación estándar, etc.), sino **interpretar qué significa cada
@@ -165,7 +158,7 @@ interesado en evaluar jugadores? A diferencia de la versión anterior de este
 documento, aquí se analiza **de forma individual cada una de las variables
 numéricas del dataset** (no solo un subconjunto reducido), para luego —en la
 sección final de recomendaciones— identificar cuáles merecen conservarse en
-un informe ejecutivo más corto.
+un informe más corto.
 
 # Descripción del dataset
 
@@ -212,16 +205,6 @@ analizable con tablas de frecuencia. `posicion` y `equipo`, en cambio, sí son
 variables categóricas propiamente dichas (pocas categorías, cada una con un
 significado sustantivo) y se analizan como tales más adelante.
 
-## ¿Qué es un análisis univariado?
-
-El análisis univariado estudia **una variable a la vez**, sin buscar
-relaciones entre variables (eso sería un análisis bivariado o multivariado).
-Para variables **numéricas** se usan medidas de tendencia central (media,
-mediana), de dispersión (desviación estándar, rango, rango intercuartílico) y
-de forma (asimetría), apoyadas en histogramas y diagramas de caja y bigotes
-(boxplots). Para variables **categóricas** se usan tablas de frecuencia y
-gráficos de barras, ya que no tiene sentido calcular un "promedio" de una
-categoría como `posicion` o `equipo`.
 
 # Diccionario de datos
 
@@ -1120,38 +1103,90 @@ con patrones de correlación similares) y se usa solo el color para mostrar
 la magnitud y el signo de cada relación; el detalle numérico de las
 variables más relevantes se muestra en la sección siguiente.
 
-```{r matriz-correlacion-completa, fig.width=19, fig.height=16}
-orden_cluster <- hclust(as.dist(1 - abs(matriz_correlacion)))$order
-niveles_orden <- rownames(matriz_correlacion)[orden_cluster]
+```{r matriz-correlacion-completa, fig.width=20, fig.height=19, out.width="100%"}
+# ============================================================
+# MATRIZ DE CORRELACIÓN ORDENADA POR CLUSTERING
+# ============================================================
 
+# Ordenar las variables según la similitud de sus correlaciones
+orden_cluster <- hclust(
+  as.dist(1 - abs(matriz_correlacion)),
+  method = "complete"
+)$order
+
+niveles_orden <- colnames(matriz_correlacion)[orden_cluster]
+
+# Convertir la matriz a formato largo
 cor_long <- as.data.frame(matriz_correlacion) %>%
   mutate(Variable1 = rownames(.)) %>%
-  pivot_longer(cols = -Variable1, names_to = "Variable2", values_to = "Correlacion") %>%
+  pivot_longer(
+    cols = -Variable1,
+    names_to = "Variable2",
+    values_to = "Correlacion"
+  ) %>%
   mutate(
     Variable1 = factor(Variable1, levels = niveles_orden),
     Variable2 = factor(Variable2, levels = niveles_orden)
   )
 
+# Gráfica
 ggplot(cor_long, aes(x = Variable1, y = Variable2, fill = Correlacion)) +
-  geom_tile() +
+  
+  geom_tile(color = "white", linewidth = 0.15) +
+  
   scale_fill_gradient2(
-    low = "#2166AC", mid = "white", high = "#B2182B",
-    midpoint = 0, limits = c(-1, 1)
+    low = "#2166AC",
+    mid = "white",
+    high = "#B2182B",
+    midpoint = 0,
+    limits = c(-1, 1),
+    breaks = c(-1, -0.5, 0, 0.5, 1),
+    name = "Correlación"
   ) +
+  
+  coord_fixed() +
+  
   labs(
-    title = "Matriz de correlación de todas las variables numéricas",
+    title = "Matriz de correlación de las variables numéricas",
     subtitle = paste0(
-      length(vars_numericas), " variables, ordenadas por clustering jerárquico — ",
-      "cálculo por pares (pairwise.complete.obs)"
+      length(vars_numericas),
+      " variables — ordenadas mediante clustering jerárquico"
     ),
-    x = NULL, y = NULL, fill = "Correlación"
+    x = NULL,
+    y = NULL
   ) +
-  theme_minimal() +
+  
+  theme_minimal(base_size = 11) +
+  
   theme(
-    axis.text.x = element_text(angle = 45, hjust = 1, size = 6.5),
-    axis.text.y = element_text(size = 6.5)
+    panel.grid = element_blank(),
+    
+    axis.text.x = element_text(
+      angle = 90,
+      hjust = 0.5,
+      vjust = 0.5,
+      size = 5
+    ),
+    
+    axis.text.y = element_text(
+      size = 5
+    ),
+    
+    plot.title = element_text(
+      face = "bold",
+      size = 16
+    ),
+    
+    plot.subtitle = element_text(
+      size = 10
+    ),
+    
+    legend.position = "right",
+    
+    plot.margin = margin(10, 10, 10, 10)
   )
 ```
+
 
 ## Detalle numérico: variables clave
 
