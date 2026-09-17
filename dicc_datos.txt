@@ -1,0 +1,412 @@
+==================================================================
+DICCIONARIO DE DATOS - NBA_espanol.csv
+==================================================================
+Fuente original: NBA_Dataset.csv (Basketball-Reference, temporadas
+1982 a 2022). Este archivo traduce y renombra las 55 columnas del
+dataset original (en inglés, con siglas de baloncesto) a nombres en
+español, más cortos y sin acentos ni caracteres especiales, para que
+puedan usarse directamente como nombres de columna en código (R,
+Python, SQL) y como etiquetas de ejes en gráficas sin romper nada.
+
+Cada fila del dataset representa el desempeño de UN JUGADOR en UNA
+TEMPORADA (puede haber una fila adicional por cada equipo si el
+jugador fue transferido a mitad de temporada, más una fila resumen
+con equipo = "TOT").
+
+Convenciones usadas en los nombres nuevos:
+  _pp    = "por partido" (promedio por partido jugado)
+  porc_  = "porcentaje" (puede ser fracción 0.0-1.0 o puntos
+           porcentuales 0-100; el rango exacto se indica en cada
+           variable, revisarlo antes de comparar o graficar)
+  _of    = ofensivo/ofensiva
+  _def   = defensivo/defensiva
+  masmenos_ = métrica de tipo "+/-" (más/menos), es decir, impacto
+           neto del jugador expresado en puntos por 100 posesiones
+
+------------------------------------------------------------------
+1) IDENTIFICACIÓN Y CONTEXTO TEMPORAL/POSICIONAL
+------------------------------------------------------------------
+
+temporada
+  Nombre original: season
+  Tipo: numérica discreta (temporal)
+  Qué mide: temporada de la NBA. El número indica el año en que
+  CIERRA la temporada (ej. 1982 = temporada 1981-82).
+  Rango: 1982 a 2022 (41 temporadas).
+
+jugador
+  Nombre original: player
+  Tipo: identificador (texto)
+  Qué mide: nombre del jugador.
+  Nota: NO es una clave única garantizada. Existen coincidencias
+  reales de nombre entre jugadores distintos (ej. dos jugadores
+  llamados "Charles Jones" en 1989, dos llamados "Eddie Johnson" en
+  1982). Para identificar un jugador de forma más confiable, usar la
+  combinación (jugador, temporada, edad) o (jugador, temporada,
+  equipo).
+  Valores distintos: 3,283.
+
+posicion
+  Nombre original: pos
+  Tipo: categórica
+  Qué mide: posición o combinación de posiciones jugadas esa
+  temporada (asignada por minutos jugados en cada posición).
+  Valores: C (pívot), PF (ala-pívot), SF (alero), SG (escolta),
+  PG (base), y combinaciones híbridas poco frecuentes como "SG-PF"
+  o "SG-PG-SF" para jugadores multi-posicionales.
+  Categorías: 17.
+
+edad
+  Nombre original: age
+  Tipo: numérica discreta
+  Qué mide: edad del jugador durante esa temporada.
+  Rango: 18 a 44 años.
+
+equipo
+  Nombre original: team_id
+  Tipo: categórica
+  Qué mide: código del equipo/franquicia para el que jugó esa
+  temporada.
+  Valor especial "TOT": significa "Total". Aparece cuando el jugador
+  fue transferido de equipo a mitad de temporada; la fila resume sus
+  estadísticas combinadas de TODOS los equipos donde jugó. En este
+  dataset, el 99.8% de las filas "TOT" (1,950 de 1,954) NO tienen un
+  desglose por equipo individual disponible — solo existe el total
+  combinado. IMPORTANTE: "TOT" no es un equipo real; debe excluirse
+  de cualquier análisis agregado POR EQUIPO (group_by equipo), ya
+  que mezclaría jugadores de distintos equipos bajo una sola
+  etiqueta.
+  Otros códigos reflejan reubicaciones/cambios de nombre históricos
+  de franquicias (ej. SEA -> OKC en 2008, VAN -> MEM en 2001,
+  WSB -> WAS en 1997, CHH -> CHA -> CHO en Charlotte).
+  Categorías: 41.
+
+------------------------------------------------------------------
+2) PARTICIPACIÓN Y MINUTOS
+------------------------------------------------------------------
+
+partidos_jugados
+  Nombre original: g
+  Tipo: numérica discreta
+  Qué mide: número de partidos jugados en la temporada.
+  Rango: 1 a 85. Los valores por encima de 82 (máximo de una
+  temporada regular normal) corresponden EXCLUSIVAMENTE a filas
+  "TOT" y son válidos (partidos reprogramados alrededor de un
+  traspaso), no errores de carga.
+
+partidos_titular
+  Nombre original: gs
+  Tipo: numérica discreta
+  Qué mide: número de partidos en los que el jugador fue titular.
+  Rango: 0 a 83. Siempre es menor o igual que partidos_jugados
+  (verificado: se cumple en el 100% de las filas).
+
+minutos_pp
+  Nombre original: mp_per_g
+  Tipo: numérica continua
+  Qué mide: minutos promedio jugados por partido.
+  Rango: 0 a ~41 minutos.
+
+minutos_totales
+  Nombre original: mp
+  Tipo: numérica discreta
+  Qué mide: minutos totales jugados en toda la temporada.
+  Rango: 0 a 3,533 (el máximo histórico corresponde a una temporada
+  real de carga extrema, no un error).
+
+------------------------------------------------------------------
+3) ESTADÍSTICAS DE TIRO "POR PARTIDO" (VOLUMEN)
+------------------------------------------------------------------
+
+tiros_anotados_pp / tiros_intentados_pp
+  Nombres originales: fg_per_g / fga_per_g
+  Tipo: numérica continua
+  Qué mide: canastas de campo (2 o 3 puntos) anotadas / intentadas
+  por partido.
+
+porc_tiro_campo
+  Nombre original: fg_pct
+  Tipo: numérica continua
+  Qué mide: porcentaje de acierto en tiros de campo (anotados /
+  intentados).
+  Escala: fracción 0.0 a 1.0.
+
+triples_anotados_pp / triples_intentados_pp
+  Nombres originales: fg3_per_g / fg3a_per_g
+  Tipo: numérica continua
+  Qué mide: triples anotados / intentados por partido.
+
+porc_triple
+  Nombre original: fg3_pct
+  Tipo: numérica continua
+  Qué mide: porcentaje de acierto en triples.
+  Escala: fracción 0.0 a 1.0. Contiene valores NA cuando el jugador
+  tuvo 0 intentos de triple en la temporada (matemáticamente
+  indefinido, no un dato faltante por error).
+
+dobles_anotados_pp / dobles_intentados_pp
+  Nombres originales: fg2_per_g / fg2a_per_g
+  Tipo: numérica continua
+  Qué mide: tiros de 2 puntos anotados / intentados por partido.
+
+porc_doble
+  Nombre original: fg2_pct
+  Tipo: numérica continua
+  Qué mide: porcentaje de acierto en tiros de 2 puntos.
+  Escala: fracción 0.0 a 1.0. Puede tener NA (0 intentos).
+
+porc_tiro_efectivo
+  Nombre original: efg_pct
+  Tipo: numérica continua
+  Qué mide: "effective field goal %": porcentaje de tiro de campo
+  que pondera el triple como 1.5 veces un doble (reconoce que un
+  triple anotado vale más). Fórmula: (anotados + 0.5*triples
+  anotados) / intentados.
+  Escala: teóricamente 0.0 a 1.0; puede superar 1.0 (hasta 1.5 en
+  este dataset) en jugadores con muestras muy pequeñas de intentos.
+
+libres_anotados_pp / libres_intentados_pp
+  Nombres originales: ft_per_g / fta_per_g
+  Tipo: numérica continua
+  Qué mide: tiros libres anotados / intentados por partido.
+
+porc_libre
+  Nombre original: ft_pct
+  Tipo: numérica continua
+  Qué mide: porcentaje de acierto en tiros libres.
+  Escala: fracción 0.0 a 1.0. Puede tener NA (0 intentos).
+
+porc_tiro_verdadero
+  Nombre original: ts_pct
+  Tipo: numérica continua
+  Qué mide: "true shooting %": eficiencia de tiro que combina de
+  forma ponderada tiros de campo, triples y libres en una sola
+  medida de eficiencia anotadora global.
+  Escala: teóricamente 0.0 a 1.0; puede superar 1.0 en muestras muy
+  pequeñas (hasta 1.5 en este dataset).
+
+porc_intentos_triple
+  Nombre original: fg3a_per_fga_pct
+  Tipo: numérica continua
+  Qué mide: proporción de los intentos de tiro de campo que fueron
+  de triple (estilo de juego: qué tan "perimetral" es el jugador).
+  Escala: fracción 0.0 a 1.0.
+
+razon_libres_intentos
+  Nombre original: fta_per_fga_pct
+  Tipo: numérica continua
+  Qué mide: razón entre intentos de tiro libre e intentos de tiro de
+  campo (qué tanto genera el jugador faltas/viajes a la línea en
+  relación con sus tiros de campo).
+  Escala: razón NO acotada a [0,1]; en este dataset va de 0 a 6.
+
+------------------------------------------------------------------
+4) REBOTES, ASISTENCIAS Y OTRAS ESTADÍSTICAS "POR PARTIDO"
+------------------------------------------------------------------
+
+rebotes_of_pp / rebotes_def_pp / rebotes_totales_pp
+  Nombres originales: orb_per_g / drb_per_g / trb_per_g
+  Tipo: numérica continua
+  Qué mide: rebotes ofensivos, defensivos y totales por partido.
+  Nota: rebotes_totales_pp = rebotes_of_pp + rebotes_def_pp
+  (identidad matemática exacta, no una correlación empírica).
+
+asistencias_pp
+  Nombre original: ast_per_g
+  Tipo: numérica continua
+  Qué mide: asistencias (pases que resultan en canasta) por partido.
+
+robos_pp
+  Nombre original: stl_per_g
+  Tipo: numérica continua
+  Qué mide: robos de balón por partido.
+
+tapones_pp
+  Nombre original: blk_per_g
+  Tipo: numérica continua
+  Qué mide: bloqueos (tapones) por partido.
+
+perdidas_pp
+  Nombre original: tov_per_g
+  Tipo: numérica continua
+  Qué mide: pérdidas de balón por partido.
+
+faltas_pp
+  Nombre original: pf_per_g
+  Tipo: numérica continua
+  Qué mide: faltas personales por partido.
+
+puntos_pp
+  Nombre original: pts_per_g
+  Tipo: numérica continua
+  Qué mide: puntos anotados por partido. Es la estadística ofensiva
+  más visible; distribución sesgada a la derecha (pocos anotadores
+  estrella se alejan mucho de la mayoría).
+
+------------------------------------------------------------------
+5) MÉTRICAS AVANZADAS POR POSESIÓN (ESCALA 0-100)
+------------------------------------------------------------------
+Estas variables NO son fracciones 0-1 como las de la sección 3, sino
+puntos porcentuales de 0 a 100 (o hasta el máximo indicado), aunque
+su nombre también empiece con "porc_". Revisar siempre el rango
+antes de comparar contra las variables de la sección 3.
+
+porc_rebotes_of_disp / porc_rebotes_def_disp / porc_rebotes_tot_disp
+  Nombres originales: orb_pct / drb_pct / trb_pct
+  Tipo: numérica continua
+  Qué mide: porcentaje estimado de rebotes ofensivos/defensivos/
+  totales DISPONIBLES que el jugador capturó mientras estuvo en
+  cancha.
+  Escala: 0 a 100 (trb_pct hasta 86.4).
+
+porc_asistencias_equipo
+  Nombre original: ast_pct
+  Tipo: numérica continua
+  Qué mide: porcentaje estimado de las canastas de sus compañeros
+  que el jugador asistió mientras estuvo en cancha.
+  Escala: 0 a 100.
+
+porc_robos_equipo
+  Nombre original: stl_pct
+  Tipo: numérica continua
+  Qué mide: porcentaje estimado de posesiones rivales que terminaron
+  en un robo de balón de este jugador.
+  Escala: 0 a 25.
+
+porc_tapones_equipo
+  Nombre original: blk_pct
+  Tipo: numérica continua
+  Qué mide: porcentaje estimado de tiros de campo de 2 puntos
+  rivales que el jugador bloqueó mientras estuvo en cancha.
+  Escala: 0 a 77.8.
+
+porc_perdidas_jugada
+  Nombre original: tov_pct
+  Tipo: numérica continua
+  Qué mide: pérdidas de balón estimadas por cada 100 jugadas
+  individuales del jugador.
+  Escala: 0 a 100.
+
+porc_uso_jugador
+  Nombre original: usg_pct
+  Tipo: numérica continua
+  Qué mide: "usage %": porcentaje estimado de las jugadas del equipo
+  que terminan siendo "usadas" por el jugador (tiro, falta recibida
+  o pérdida) mientras estuvo en cancha. Es el mejor indicador de qué
+  tanto protagonismo ofensivo tiene el jugador en su equipo.
+  Escala: 0 a 100.
+
+------------------------------------------------------------------
+6) MÉTRICAS COMPUESTAS DE VALOR DEL JUGADOR
+------------------------------------------------------------------
+ADVERTENCIA GENERAL: estas métricas (especialmente indice_eficiencia
+y las de "masmenos_") son TASAS y pueden tomar valores extremos y
+poco representativos en jugadores con muy pocos minutos/partidos
+jugados (ej. un jugador con 1 minuto en toda la temporada puede
+tener un indice_eficiencia superior a 130 o inferior a -90 solo por
+una jugada aislada). Se recomienda filtrar por un mínimo razonable
+de minutos o partidos jugados antes de comparar jugadores usando
+estas variables.
+
+indice_eficiencia
+  Nombre original: per (Player Efficiency Rating)
+  Tipo: numérica continua
+  Qué mide: índice compuesto que resume en un solo número la
+  producción del jugador por minuto, ajustado por el ritmo de juego
+  de su equipo.
+  Escala: centrada en 15.0 (promedio de liga por diseño); puede ser
+  negativa.
+
+victorias_ofensiva / victorias_defensa / victorias_total
+  Nombres originales: ows / dws / ws (Win Shares)
+  Tipo: numérica continua
+  Qué mide: número estimado de victorias del equipo atribuibles a la
+  contribución ofensiva / defensiva / total del jugador esa
+  temporada.
+  Nota: victorias_total = victorias_ofensiva + victorias_defensa
+  (identidad matemática exacta).
+  Escala: puede ser negativa.
+
+victorias_por_48min
+  Nombre original: ws_per_48
+  Tipo: numérica continua
+  Qué mide: victorias_total normalizadas al ritmo de 48 minutos (la
+  duración de un partido completo), para comparar jugadores con
+  distinta cantidad de minutos jugados.
+  Escala: puede ser negativa.
+
+masmenos_ofensivo / masmenos_defensivo / masmenos_total
+  Nombres originales: obpm / dbpm / bpm (Box Plus/Minus)
+  Tipo: numérica continua
+  Qué mide: impacto neto estimado del jugador en el marcador,
+  expresado en puntos por cada 100 posesiones, por encima (positivo)
+  o por debajo (negativo) del jugador promedio de la liga.
+  Nota: masmenos_total = masmenos_ofensivo + masmenos_defensivo
+  (identidad matemática exacta).
+  Escala: puede ser negativa; valores extremos casi siempre
+  corresponden a muestras de minutos muy pequeñas (ver advertencia
+  general arriba).
+
+valor_sobre_reemplazo
+  Nombre original: vorp (Value Over Replacement Player)
+  Tipo: numérica continua
+  Qué mide: valor acumulado del jugador a lo largo de la temporada,
+  respecto a un jugador de reemplazo hipotético de nivel mínimo
+  (derivado de masmenos_total y los minutos jugados).
+  Escala: puede ser negativa.
+
+porc_votos_mvp
+  Nombre original: award_share
+  Tipo: numérica continua
+  Qué mide: fracción de los votos posibles al premio MVP de la
+  temporada que recibió el jugador.
+  Escala: fracción 0.0 a 1.0 (0 para la gran mayoría de jugadores,
+  que nunca reciben votos).
+
+------------------------------------------------------------------
+7) CONTEXTO DE EQUIPO (mismo valor repetido en cada jugador de ese
+   equipo/temporada)
+------------------------------------------------------------------
+
+margen_victoria
+  Nombre original: mov (Margin of Victory)
+  Tipo: numérica continua
+  Qué mide: diferencia de puntos promedio por partido del EQUIPO del
+  jugador esa temporada (puntos a favor menos puntos en contra).
+  Escala: puede ser negativa (equipos perdedores).
+
+margen_victoria_ajust
+  Nombre original: mov_adj
+  Tipo: numérica continua
+  Qué mide: margen_victoria del equipo, ajustado por la fuerza de
+  los rivales enfrentados (fuerza de calendario).
+  Escala: puede ser negativa.
+
+porc_victorias_equipo
+  Nombre original: win_loss_pct
+  Tipo: numérica continua
+  Qué mide: porcentaje de partidos ganados por el equipo del jugador
+  esa temporada.
+  Escala: fracción 0.0 a 1.0.
+  Nota: porc_victorias_equipo está muy fuertemente correlacionado
+  con margen_victoria / margen_victoria_ajust (r ≈ 0.97): es una
+  relación empírica real y esperada en analítica deportiva (el
+  margen de puntos predice casi perfectamente el porcentaje de
+  victorias de un equipo a lo largo de una temporada).
+
+==================================================================
+RESUMEN DE TIPOS DE VARIABLE
+==================================================================
+Identificador (1):        jugador
+Categóricas (2):           posicion, equipo
+Numéricas discretas (5):   temporada, edad, partidos_jugados,
+                            partidos_titular, minutos_totales
+Numéricas continuas (47):  el resto de las columnas (estadísticas de
+                            tiro, rebotes, asistencias, métricas
+                            avanzadas y de equipo)
+Booleanas (0):              este dataset no contiene variables
+                            binarias/Sí-No.
+
+Total de columnas: 55
+Total de registros: 17,697 (temporada-jugador, 1982-2022)
+==================================================================
