@@ -1,0 +1,12 @@
+#	Variable	Dimensión	Justificación con este archivo
+1	valor_sobre_reemplazo	Valor global	Predictor #1 del MVP, con importancia 0.127 (el doble del #2). Representa todo el cluster de compuestas: ρ = 0.95 con BPM y 0.86 con WS.
+2	puntos_pp	Producción	Comunalidad más alta del dataset (0.95 en 4 PCs) y carga máxima en PC1 (0.92). Representa el cluster de volumen.
+3	minutos_totales	Oportunidad	Predictor #1 de WS, con importancia 0.345 y ρ = 0.86. Control obligatorio para todo lo acumulado.
+4	porc_tiro_verdadero	Eficiencia	#1 para VORP y #2 para WS. Aporta información independiente: solo r = 0.11 con el uso.
+5	porc_uso_jugador	Rol	Cluster propio, r = 0.73 con los puntos. Separa protagonismo de calidad.
+6	porc_rebotes_tot_disp	Interior	Carga máxima de PC2 (0.89) y representante de los tres indicadores de rebote normalizados. Mejor que rebotes_totales_pp porque no depende de los minutos.
+7	porc_asistencias_equipo	Creación	Cluster propio, importancia 0.029 en VORP y carga −0.64 en PC2.
+8	porc_intentos_triple	Estilo/época	Representa el cluster de triples, es la variable más ligada al tiempo (r = 0.50) y no sufre el problema de NA de porc_triple.
+9	masmenos_defensivo	Defensa	Cluster aislado: la defensa es dimensión propia (ρ = 0.40 con VORP). Sin ella el análisis es solo ofensivo.
+10	porc_victorias_equipo	Contexto	Carga máxima de PC3 (0.73), #3 para el MVP (0.060), y representa a margen y margen ajustado (r > 0.96).
+
