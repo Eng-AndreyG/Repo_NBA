@@ -1,6 +1,6 @@
 ---
 title: "Análisis Bivariado: Estadísticas de Jugadores de la NBA"
-subtitle: "Continuación del análisis univariado (`nbaFINAL.csv`, temporadas 1982-2022) — 10 relaciones seleccionadas entre variables clave, con control por posición, curvas no lineales, evolución temporal y variables derivadas"
+subtitle: "Continuación del análisis univariado (`nbaFINAL.csv`, temporadas 1982-2022) — 11 relaciones seleccionadas entre variables clave, con control por posición, curvas no lineales, evolución temporal y variables derivadas"
 author: "Análisis exploratorio de datos (EDA)"
 date: "`r format(Sys.Date(), '%d de %B de %Y')`"
 output:
@@ -130,13 +130,13 @@ separar explícitamente **lo matemático** de **lo práctico**:
   entrenador o un analista de un equipo de la NBA, y qué decisión o
   advertencia se deriva de ahí.
 
-## Las 10 relaciones seleccionadas
+## Las 11 relaciones seleccionadas
 
 ```{r tabla-relaciones}
 relaciones <- tribble(
   ~Relacion, ~Variables, ~Tecnica, ~Pregunta,
   "1. Uso ofensivo vs. eficiencia de tiro", "porc_uso_jugador vs. porc_tiro_verdadero", "Dispersión + recta de ajuste + cuadrantes", "¿Tirar más cuesta eficiencia, o hay estrellas que hacen ambas cosas?",
-  "2. Rendimiento vs. edad", "edad vs. indice_eficiencia, porc_tiro_verdadero, minutos_pp", "Boxplots por grupo de edad", "¿A qué edad rinde más un jugador promedio, y por qué un coeficiente sería engañoso?",
+  "2. Rendimiento vs. edad", "edad vs. indice_eficiencia, porc_tiro_verdadero, minutos_pp, valor_sobre_reemplazo", "Boxplots por grupo de edad", "¿A qué edad rinde más un jugador promedio, y por qué un coeficiente sería engañoso?",
   "3. Asistencias vs. pérdidas, por posición", "asistencias_pp vs. perdidas_pp, agrupado por posicion", "Boxplots por posición + correlación dentro de cada grupo", "¿El manejo de balón cuesta pérdidas dentro del mismo rol, o solo entre roles distintos?",
   "4. % de intentos de triple vs. temporada", "porc_intentos_triple vs. temporada", "Boxplots por era (grupos de temporadas)", "¿Cuándo y qué tan rápido cambió el estilo de juego de la NBA?",
   "5. Rebote vs. creación de juego", "porc_rebotes_tot_disp vs. porc_asistencias_equipo", "Dispersión coloreada por posición", "¿Rebotear y asistir son roles opuestos, y quién rompe esa regla?",
@@ -144,7 +144,8 @@ relaciones <- tribble(
   "7. Oportunidad vs. valor total", "minutos_totales vs. valor_sobre_reemplazo", "Boxplots por decil de minutos", "¿El valor crece proporcional a los minutos, o se acelera?",
   "8. Manejo de balón vs. pérdidas normalizadas", "porc_uso_jugador vs. porc_perdidas_jugada", "Dispersión + recta de ajuste", "¿Más protagonismo implica más riesgo de pérdida por jugada?",
   "9. Contexto de equipo vs. impacto defensivo", "porc_victorias_equipo vs. masmenos_defensivo", "Dispersión + recta de ajuste + cuadrante", "¿Los buenos defensores solo aparecen en equipos ganadores?",
-  "10. Experiencia vs. eficiencia, por edad de entrada", "experiencia (derivada) vs. indice_eficiencia, por edad_entrada (derivada)", "Boxplots agrupados por bloque de experiencia y edad de entrada", "¿Un novato que entra joven rinde distinto, a igual experiencia, que uno que entra mayor?"
+  "10. Experiencia vs. eficiencia, por edad de entrada", "experiencia (derivada) vs. indice_eficiencia, por edad_entrada (derivada)", "Boxplots agrupados por bloque de experiencia y edad de entrada", "¿Un novato que entra joven rinde distinto, a igual experiencia, que uno que entra mayor?",
+  "11. Anotación vs. creación de juego, por posición", "puntos_pp vs. asistencias_pp, coloreado por posicion", "Dispersión coloreada por posición + recta de ajuste global", "¿Anotar mucho implica asistir poco, o ese supuesto trade-off no se cumple?"
 )
 
 relaciones %>%
@@ -152,7 +153,7 @@ relaciones %>%
   select(-`#`) %>%
   kable(
     col.names = c("Relación", "Variables", "Técnica", "Pregunta que responde"),
-    caption = "Las 10 relaciones bivariadas seleccionadas para este análisis"
+    caption = "Las 11 relaciones bivariadas seleccionadas para este análisis"
   ) %>%
   kable_styling(
     bootstrap_options = c("striped", "hover", "condensed"),
@@ -304,15 +305,20 @@ de distinguir a quién **darle** el balón de quién simplemente **lo tiene**.
 ## 2. Rendimiento vs. edad, como curva y no como correlación
 
 Casi ninguna métrica de rendimiento —ni el PER (eficiencia por minuto), ni
-el TS% (eficiencia de tiro), ni los minutos jugados por partido— es lineal
-con la edad: sube en la juventud, alcanza un pico y decae después. Reportar
-solo un coeficiente de
-correlación aquí sería tan engañoso como calcular la correlación entre el
-INSE y el puntaje sin revisar antes que la variable estaba mal codificada:
-el número puede ser verdadero y, aun así, no decir nada útil.
+el TS% (eficiencia de tiro), ni los minutos jugados por partido, ni el VORP
+(valor total aportado)— es lineal con la edad: sube en la juventud, alcanza
+un pico y decae después. Reportar solo un coeficiente de correlación aquí
+sería tan engañoso como calcular la correlación entre el INSE y el puntaje
+sin revisar antes que la variable estaba mal codificada: el número puede
+ser verdadero y, aun así, no decir nada útil. Se incluye el VORP junto a
+las otras tres métricas porque es la única de las cuatro que es
+**acumulativa** (no una tasa por minuto), así que su curva de edad puede
+diferir un poco de la del PER si el declive de minutos jugados llega antes
+que el declive de habilidad.
 
 ```{r r2-calculo}
-r_edad_per <- cor(df$edad, df$indice_eficiencia, use = "pairwise.complete.obs")
+r_edad_per  <- cor(df$edad, df$indice_eficiencia, use = "pairwise.complete.obs")
+r_edad_vorp <- cor(df$edad, df$valor_sobre_reemplazo, use = "pairwise.complete.obs")
 
 resumen_edad <- df %>%
   group_by(edad) %>%
@@ -320,11 +326,13 @@ resumen_edad <- df %>%
     PER = mean(indice_eficiencia, na.rm = TRUE),
     TS = mean(porc_tiro_verdadero, na.rm = TRUE),
     Minutos = mean(minutos_pp, na.rm = TRUE),
+    VORP = median(valor_sobre_reemplazo, na.rm = TRUE),
     n = n(),
     .groups = "drop"
   )
 
-edad_pico_per <- resumen_edad$edad[which.max(resumen_edad$PER)]
+edad_pico_per  <- resumen_edad$edad[which.max(resumen_edad$PER)]
+edad_pico_vorp <- resumen_edad$edad[which.max(resumen_edad$VORP)]
 
 # Agrupar la edad en rangos para poder resumir la curva con boxplots
 df <- df %>%
@@ -336,9 +344,13 @@ df <- df %>%
       right = TRUE
     )
   )
+
+vorp_por_grupo <- df %>%
+  group_by(grupo_edad) %>%
+  summarise(VORP_medio = mean(valor_sobre_reemplazo, na.rm = TRUE), .groups = "drop")
 ```
 
-```{r r2-plot, fig.width=9.5, fig.height=9}
+```{r r2-plot, fig.width=9.5, fig.height=11.5}
 p_per <- ggplot(df, aes(x = grupo_edad, y = indice_eficiencia)) +
   geom_boxplot(fill = col_punto, color = "grey25", outlier.color = col_outlier,
                outlier.alpha = 0.3, na.rm = TRUE) +
@@ -354,36 +366,48 @@ p_ts <- ggplot(df, aes(x = grupo_edad, y = porc_tiro_verdadero)) +
 p_min <- ggplot(df, aes(x = grupo_edad, y = minutos_pp)) +
   geom_boxplot(fill = col_punto, color = "grey25", outlier.color = col_outlier,
                outlier.alpha = 0.3, na.rm = TRUE) +
-  labs(title = "Minutos por partido según grupo de edad", x = "Grupo de edad", y = "Minutos") +
+  labs(title = "Minutos por partido según grupo de edad", x = NULL, y = "Minutos") +
   tema_biv
 
-p_per / p_ts / p_min
+p_vorp <- ggplot(df, aes(x = grupo_edad, y = valor_sobre_reemplazo)) +
+  geom_boxplot(fill = col_punto, color = "grey25", outlier.color = col_outlier,
+               outlier.alpha = 0.3, na.rm = TRUE) +
+  labs(title = "VORP (valor total aportado) según grupo de edad", x = "Grupo de edad", y = "VORP") +
+  tema_biv
+
+p_per / p_ts / p_min / p_vorp
 ```
 
 ```{r r2-tabla}
 resumen_edad %>%
   filter(edad >= 19, edad <= 38) %>%
-  select(edad, PER, TS, Minutos, n) %>%
+  select(edad, PER, TS, Minutos, VORP, n) %>%
   kable(
-    digits = c(0, 1, 3, 1, 0),
-    col.names = c("Edad", "PER promedio (eficiencia por minuto)", "TS% promedio (eficiencia de tiro)", "Minutos/partido promedio", "Cantidad de temporadas-jugador (n)"),
-    caption = "Promedio de tres métricas de rendimiento, por edad"
+    digits = c(0, 1, 3, 1, 2, 0),
+    col.names = c("Edad", "PER promedio (eficiencia por minuto)", "TS% promedio (eficiencia de tiro)", "Minutos/partido promedio", "VORP mediana (valor total aportado)", "Cantidad de temporadas-jugador (n)"),
+    caption = "Promedio (o mediana, para VORP) de cuatro métricas de rendimiento, por edad"
   ) %>%
   kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE) %>%
   scroll_box(height = "300px")
 ```
 
 **Lectura matemática:** la correlación lineal entre `edad` y
-`indice_eficiencia` es r = `r round(r_edad_per, 3)` — **esencialmente
-cero**. Sin embargo, los boxplots por grupo de edad muestran que la
-distribución del PER **no es plana**: la caja sube de 18-21 a 25-27 años
-(donde se ubica el pico, con el grupo 28-30 casi empatado) y luego baja de
-forma sostenida hasta 34+. El mismo patrón de subida-pico-bajada aparece en
-TS% y en minutos por partido. Un coeficiente de Pearson no puede detectar
-esta forma porque mide asociación **lineal**, y aquí la mitad de la
-relación sube y la otra mitad baja, así que ambas mitades **se cancelan**
-en el promedio — pero al agrupar por rangos de edad y comparar las cajas,
-la forma de "sube, hace pico, baja" se vuelve evidente.
+`indice_eficiencia` es r = `r round(r_edad_per, 3)`, y entre `edad` y
+`valor_sobre_reemplazo` es r = `r round(r_edad_vorp, 3)` — en ambos casos,
+**esencialmente cero**. Sin embargo, los boxplots por grupo de edad
+muestran que ninguna de las cuatro distribuciones es plana: la caja de PER
+sube de 18-21 a 25-27 años (donde se ubica su pico, con el grupo 28-30
+casi empatado) y luego baja de forma sostenida hasta 34+; TS% y minutos
+por partido siguen el mismo patrón de subida-pico-bajada. El VORP hace
+exactamente lo mismo, solo que con el pico desplazado un poco más tarde:
+su mediana pasa de 0.0 en el grupo 18-21 a un máximo de 0.5 en 28-30
+(promedio de `r round(vorp_por_grupo$VORP_medio[vorp_por_grupo$grupo_edad == "28-30"], 2)`),
+y desciende después hasta 0.2 en 34+. Un coeficiente de Pearson no puede
+detectar ninguna de estas formas porque mide asociación **lineal**, y aquí
+la mitad de la relación sube y la otra mitad baja, así que ambas mitades
+**se cancelan** en el promedio — pero al agrupar por rangos de edad y
+comparar las cajas, la forma de "sube, hace pico, baja" se vuelve evidente
+en las cuatro métricas a la vez.
 
 **Lectura práctica (mundo real):** esto es la curva de desarrollo y
 declive física de un atleta profesional, y tiene consecuencias de negocio
@@ -394,7 +418,15 @@ apostar contra la forma más consistente de todo el dataset. También es la
 razón estadística detrás del fenómeno de "el novato que aún no explota":
 antes de los 22 años el PER promedio todavía está subiendo, así que juzgar
 a un jugador de 20 años por su producción actual subestima sistemáticamente
-su techo.
+su techo. Que el VORP —siendo una métrica acumulada de toda la temporada,
+no una tasa por minuto— también dibuje la misma curva confirma que el pico
+de 26-30 años no es un artefacto de cómo se calcula cada estadística: es un
+pico real de disponibilidad y calidad combinadas. Además, después de los
+37-38 años quedan en el dataset muy pocos jugadores por edad (por ejemplo,
+solo dos registros a los 43 años), así que las medianas de ese tramo final
+deben leerse con cautela: reflejan a los pocos jugadores de élite que
+lograron seguir jugando a esa edad, no la trayectoria típica de una
+carrera.
 
 ---
 
@@ -979,6 +1011,100 @@ mejora el rendimiento" pasaría por alto.
 
 ---
 
+## 11. Anotación (puntos por partido) vs. creación de juego (asistencias por partido), por posición
+
+Esta relación contrasta los puntos por partido (`puntos_pp`) con las
+asistencias por partido (`asistencias_pp`). La gestión de las posesiones
+sugiere un compromiso lógico entre ambas: si un jugador tira a canasta, no
+puede asistir a un compañero en esa misma jugada, así que sería razonable
+esperar que los perfiles de alta anotación registren pocas asistencias, y
+viceversa, separando a los finalizadores de los distribuidores puros. Se
+colorea por `posicion` para ver si ese supuesto compromiso se cumple
+dentro de cada rol o si, como en la relación 5, hay un grupo que rompe la
+regla.
+
+```{r r11-calculo}
+r_pts_ast <- cor(df$puntos_pp, df$asistencias_pp, use = "pairwise.complete.obs")
+
+tabla_pts_ast <- df %>%
+  group_by(posicion) %>%
+  summarise(
+    puntos_mediana = median(puntos_pp, na.rm = TRUE),
+    asistencias_mediana = median(asistencias_pp, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(asistencias_mediana)
+
+orden_pos_ast2 <- tabla_pts_ast$posicion
+
+q_pts75 <- quantile(df$puntos_pp, 0.75, na.rm = TRUE)
+q_ast75 <- quantile(df$asistencias_pp, 0.75, na.rm = TRUE)
+```
+
+```{r r11-plot, fig.width=9.5, fig.height=6.5}
+ggplot(df, aes(x = puntos_pp, y = asistencias_pp, color = posicion)) +
+  geom_point(alpha = 0.25, size = 0.8, na.rm = TRUE) +
+  geom_smooth(aes(group = 1), method = "lm", se = FALSE, color = "black", linewidth = 1, na.rm = TRUE) +
+  scale_color_manual(values = paleta_posicion) +
+  labs(
+    title = "Puntos por partido vs. asistencias por partido, por posición",
+    subtitle = paste0("r = ", round(r_pts_ast, 3), " · color = posición · línea negra = tendencia global"),
+    x = "Puntos por partido", y = "Asistencias por partido"
+  ) +
+  tema_biv
+```
+
+```{r r11-tabla}
+tabla_pts_ast %>%
+  kable(
+    digits = c(0, 1, 1),
+    col.names = c("Posición", "Puntos/partido (mediana)", "Asistencias/partido (mediana)"),
+    caption = "Puntos y asistencias por partido, por posición (ordenado de menor a mayor asistencias)"
+  ) %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+```{r r11-tabla-hibridos}
+df %>%
+  filter(puntos_pp > q_pts75, asistencias_pp > q_ast75) %>%
+  slice_max(valor_sobre_reemplazo, n = 6) %>%
+  select(jugador, temporada, posicion, puntos_pp, asistencias_pp, valor_sobre_reemplazo) %>%
+  kable(
+    digits = c(0, 0, 0, 1, 1, 1),
+    col.names = c("Jugador", "Temporada", "Posición", "Puntos/partido", "Asistencias/partido", "VORP (valor total aportado)"),
+    caption = "Anotan y asisten a la vez: puntos y asistencias simultáneamente en el 25% más alto"
+  ) %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+**Lectura matemática:** la correlación es
+r = `r round(r_pts_ast, 3)`, **positiva y de magnitud moderada** — el
+signo contrario al que predeciría un compromiso estricto entre anotar y
+asistir. La tabla por posición muestra por qué: los bases (`PG`) tienen
+una mediana de asistencias muy por encima del resto
+(`r round(tabla_pts_ast$asistencias_mediana[tabla_pts_ast$posicion == "PG"], 1)`,
+frente a
+`r round(min(tabla_pts_ast$asistencias_mediana[tabla_pts_ast$posicion != "PG"]), 1)`-`r round(max(tabla_pts_ast$asistencias_mediana[tabla_pts_ast$posicion != "PG"]), 1)`
+en las demás posiciones), pero sus puntos por partido no son los más
+bajos: están en el mismo rango que aleros y ala-pívots. Son los bases
+quienes empujan la relación hacia arriba al combinar buen volumen de
+anotación con muchas asistencias, no un reparto estricto entre anotar o
+asistir dentro de cada posición.
+
+**Lectura práctica (mundo real):** el grupo que aparece simultáneamente en
+el 25% más alto de ambas variables (tabla de arriba) no está dominado por
+bases, como sugeriría la intuición de "el base es quien reparte", sino por
+escoltas y aleros con el balón en las manos —Michael Jordan y LeBron James
+concentran varias de las mejores temporadas de esta tabla—, jugadores que
+funcionan como el principal generador ofensivo de su equipo sin ocupar
+formalmente la posición de base. Para la construcción de una plantilla,
+esto confirma que "anotador" y "creador de juego" no son roles excluyentes
+que dependan de la posición asignada, sino habilidades que algunos pocos
+jugadores de élite combinan a la vez, y que el dato de posición por sí
+solo no captura.
+
+---
+
 # Conclusiones del análisis bivariado
 
 - **La correlación de Pearson resume bien algunas relaciones y esconde
@@ -1013,6 +1139,14 @@ mejora el rendimiento" pasaría por alto.
   (relación 10) no existen en `nbaFINAL.csv`; construirlas fue necesario
   para distinguir el efecto del desarrollo del efecto del sesgo de
   selección de quién llega joven a la liga.
+- **Un supuesto compromiso entre dos habilidades no siempre se cumple.**
+  Puntos vs. asistencias por partido (relación 11) es positiva
+  (r ≈ 0.59), no negativa: anotar y crear juego comparten una causa común
+  (los minutos y el protagonismo ofensivo del jugador), y son los bases
+  quienes empujan la relación hacia arriba, no una compensación general
+  entre roles. Los pocos jugadores que dominan ambas variables a la vez
+  (Michael Jordan, LeBron James) tampoco son bases, lo que confirma que
+  "anotador" y "creador de juego" son habilidades, no posiciones.
 - **Siguientes pasos naturales hacia el análisis multivariado:** (1) un
   modelo de regresión de `valor_sobre_reemplazo` o `porc_votos_mvp` que
   controle simultáneamente por minutos, posición y temporada, en vez de
