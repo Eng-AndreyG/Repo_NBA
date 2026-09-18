@@ -74,8 +74,11 @@ df <- read_csv(
 # muy alta cardinalidad (es un identificador, no una variable categórica
 # de análisis); "posicion" y "equipo" sí son variables categóricas
 # propiamente dichas y se tratan como tales en el resto del documento.
+# "porc_votos_mvp" se elimina del dataset de trabajo: no se usa en ningún
+# análisis de este documento.
 df <- df %>%
-  mutate(across(where(is.character), as.factor))
+  mutate(across(where(is.character), as.factor)) %>%
+  select(-porc_votos_mvp)
 
 # ============================================================
 # PALETA ÚNICA DEL DOCUMENTO
@@ -142,7 +145,6 @@ etiquetas_num <- c(
   masmenos_defensivo = "Box Plus/Minus defensivo",
   masmenos_total = "Box Plus/Minus total",
   valor_sobre_reemplazo = "Value Over Replacement Player (VORP)",
-  porc_votos_mvp = "Fracción de votos recibidos al MVP",
   margen_victoria = "Margen de victoria del equipo",
   margen_victoria_ajust = "Margen de victoria ajustado por calendario",
   porc_victorias_equipo = "Porcentaje de victorias del equipo"
@@ -327,7 +329,6 @@ diccionario <- tribble(
   "masmenos_defensivo", "Numérica continua", "Box Plus/Minus defensivo (impacto defensivo en puntos por 100 posesiones).", "Puede ser negativo.",
   "masmenos_total", "Numérica continua", "Box Plus/Minus total (= masmenos_ofensivo + masmenos_defensivo).", "Puede ser negativo.",
   "valor_sobre_reemplazo", "Numérica continua", "Value Over Replacement Player: valor acumulado del jugador respecto a un jugador de reemplazo de nivel mínimo.", "Puede ser negativo.",
-  "porc_votos_mvp", "Numérica continua", "Fracción de los votos posibles al premio MVP recibidos por el jugador esa temporada.", "Fracción 0.0-1.0 (0 para la gran mayoría).",
   "margen_victoria", "Numérica continua", "Margen de victoria promedio del equipo del jugador esa temporada (diferencia de puntos por partido).", "Puede ser negativo.",
   "margen_victoria_ajust", "Numérica continua", "Margen de victoria del equipo, ajustado por fuerza de calendario.", "Puede ser negativo.",
   "porc_victorias_equipo", "Numérica continua", "Porcentaje de victorias del equipo del jugador esa temporada.", "Fracción 0.0-1.0."
@@ -598,6 +599,11 @@ seleccion_clave <- tribble(
   "Contexto de equipo", "porc_victorias_equipo", "Carga máxima de PC3 (0.73), #3 para el MVP (0.060) y representa a margen_victoria y margen_victoria_ajust (r > 0.96 con ambos)."
 )
 
+# "temporada" se excluye del análisis individual variable por variable: es un
+# identificador temporal, no una estadística de rendimiento, y su evolución ya
+# se trata en detalle en el análisis bivariado (era del triple, curva de edad).
+vars_restantes <- setdiff(vars_numericas, c(vars_clave, "temporada"))
+
 seleccion_clave %>%
   mutate(`#` = row_number(), .before = Dimension) %>%
   kable(
@@ -679,7 +685,7 @@ estándar, mínimo, máximo, asimetría y número de `NA`) y visualizaciones
 - **Las 10 variables clave** (secciones 1 a 10 siguientes) reciben
   **gráficos a tamaño completo**, cuantiles detallados e interpretación
   extensa escrita a mano.
-- **Las `r length(vars_numericas) - length(vars_clave)` variables
+- **Las `r length(vars_restantes)` variables
   restantes** se analizan en la sección *Resto de variables numéricas*, con
   el mismo rigor estadístico pero gráficos compactos, para dar al documento
   cobertura completa sin restar protagonismo a lo importante.
@@ -890,10 +896,6 @@ hist_clave("puntos_pp", bins = 45)
 box_clave("puntos_pp")
 ```
 
-```{r puntos-posicion, fig.width=9.5, fig.height=4.6}
-box_por_posicion("puntos_pp")
-```
-
 **Interpretación:**
 Con una media de `r round(mean(df$puntos_pp), 2)` puntos y una mediana de
 `r round(median(df$puntos_pp), 1)`, la distribución mantiene una
@@ -903,19 +905,13 @@ filtrar a los jugadores marginales: la mayoría de los profesionales de la
 NBA anotan en un rango estrecho de roles secundarios, y una minoría de
 anotadores de élite se aleja mucho hacia arriba (P99 =
 `r round(quantile(df$puntos_pp, 0.99), 1)` puntos, máximo
-`r round(max(df$puntos_pp), 1)`).
-
-El boxplot por posición añade el matiz más interesante: a diferencia de los
-rebotes o las asistencias, **anotar no es una función especializada del
-rol**. Las cinco posiciones tienen medianas muy parecidas, y los máximos
-extremos aparecen en varias de ellas. Un analista debe leer esto como una
-advertencia: `puntos_pp` mide **volumen, no eficiencia ni valor**. Un
-jugador puede promediar 20 puntos con un porcentaje de tiro pobre y estar
-restando valor neto a su equipo; por eso esta variable debe interpretarse
-siempre junto con `porc_tiro_verdadero` (eficiencia, sección 4) y
-`porc_uso_jugador` (cuántas jugadas consumió para conseguirlos, sección 5),
-que es exactamente la razón por la que las tres aparecen como dimensiones
-separadas en este panel.
+`r round(max(df$puntos_pp), 1)`). `puntos_pp` mide **volumen, no eficiencia
+ni valor**: un jugador puede promediar 20 puntos con un porcentaje de tiro
+pobre y estar restando valor neto a su equipo; por eso esta variable debe
+interpretarse siempre junto con `porc_tiro_verdadero` (eficiencia, sección
+4) y `porc_uso_jugador` (cuántas jugadas consumió para conseguirlos,
+sección 5), que es exactamente la razón por la que las tres aparecen como
+dimensiones separadas en este panel.
 
 ---
 
@@ -1102,26 +1098,7 @@ hist_clave("porc_rebotes_tot_disp", bins = 45)
 box_clave("porc_rebotes_tot_disp")
 ```
 
-```{r trb-posicion, fig.width=9.5, fig.height=4.6}
-box_por_posicion("porc_rebotes_tot_disp")
-```
-
 **Interpretación:**
-El boxplot por posición muestra la **separación por rol más nítida de todo
-el dataset**: las medianas crecen de forma monótona desde los bases
-(`r round(median(df$porc_rebotes_tot_disp[df$posicion == "PG"]), 1)`%) hasta
-los pívots
-(`r round(median(df$porc_rebotes_tot_disp[df$posicion == "C"]), 1)`%). El
-corte más marcado está **entre el alero y el ala-pívot**: sus rangos
-intercuartílicos no se solapan en absoluto, de modo que la variable separa
-con claridad el **grupo exterior** (PG, SG, SF) del **interior** (PF, C).
-Dentro de cada grupo, en cambio, las posiciones contiguas sí se solapan
-—distinguir un base de un escolta por su rebote no es fiable—. Si hubiera
-que adivinar si un jugador es interior o exterior conociendo una sola
-estadística, esta sería la candidata más informativa. Esa es precisamente la razón por la que domina el
-segundo componente principal: **PC2 es, en esencia, el eje "interior ↔
-exterior"** del juego, y el rebote normalizado es su mejor marcador.
-
 La distribución global es asimétrica a la derecha (asimetría =
 `r round(e1071::skewness(df$porc_rebotes_tot_disp, type = 2), 2)`), con
 mediana `r round(median(df$porc_rebotes_tot_disp), 1)`% y un máximo de
@@ -1164,10 +1141,6 @@ hist_clave("porc_asistencias_equipo", bins = 45)
 box_clave("porc_asistencias_equipo")
 ```
 
-```{r ast-posicion, fig.width=9.5, fig.height=4.6}
-box_por_posicion("porc_asistencias_equipo")
-```
-
 **Interpretación:**
 Es la variable clave con la **asimetría positiva más marcada** después del
 VORP (asimetría =
@@ -1179,20 +1152,9 @@ un hecho táctico del baloncesto: **la creación de juego es una función
 concentrada**. La mayoría de los jugadores en cancha no manejan el balón, y
 un equipo canaliza la organización de su ataque por uno o dos jugadores; el
 histograma es, en la práctica, la huella estadística de esa división del
-trabajo.
-
-El gráfico por posición confirma la contraparte del rebote: los bases
-dominan la parte alta y los pívots la baja, en orden inverso al de la
-sección 6. La correlación **negativa** entre ambas variables
-(r = `r round(cor(df$porc_asistencias_equipo, df$porc_rebotes_tot_disp), 2)`)
-es una de las relaciones más informativas del dataset —y es genuinamente
-empírica, no algebraica: nada en las fórmulas obliga a que quien rebotea
-mucho asista poco. Lo que refleja es la **especialización posicional real**
-del baloncesto, y es la razón por la que ambas variables, aunque
-correlacionadas, merecen entrar por separado en el panel: juntas definen un
-eje completo, y quedarse con una sola perdería la mitad de la información.
-Al igual que con el rebote, se prefiere AST% a `asistencias_pp` porque la
-versión normalizada no penaliza al creador de juego que sale del banquillo.
+trabajo. Al igual que con el rebote, se prefiere AST% a `asistencias_pp`
+porque la versión normalizada no penaliza al creador de juego que sale del
+banquillo.
 
 ---
 
@@ -1405,7 +1367,7 @@ que es el hallazgo empírico más robusto del dataset.
 
 ## Resto de variables numéricas
 
-Las `r length(vars_numericas) - length(vars_clave)` variables numéricas que
+Las `r length(vars_restantes)` variables numéricas que
 **no** forman parte del panel clave se analizan a continuación de forma
 sistemática y compacta: para cada una se muestra su descripción (tomada del
 diccionario de datos), la tabla de estadísticos, histograma y boxplot lado a
@@ -1492,8 +1454,6 @@ interpretar_numerica <- function(v) {
 ```
 
 ```{r loop-numericas, results='asis', fig.width=10, fig.height=2.9}
-vars_restantes <- setdiff(vars_numericas, vars_clave)
-
 for (v in vars_restantes) {
 
   etiqueta <- etiquetas_num[[v]]
@@ -1508,8 +1468,19 @@ for (v in vars_restantes) {
       kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
   )
 
-  p_hist <- ggplot(df, aes(x = .data[[v]])) +
-    geom_histogram(bins = 30, fill = col_hist, color = "white", linewidth = 0.2, na.rm = TRUE) +
+  p_hist <- ggplot(df, aes(x = .data[[v]]))
+
+  # "edad" toma pocos valores enteros (18-43): con bins = 30 el ancho de
+  # barra queda por debajo de 1 año y deja huecos vacíos entre edades.
+  if (v == "edad") {
+    p_hist <- p_hist +
+      geom_histogram(binwidth = 1, fill = col_hist, color = "white", linewidth = 0.2, na.rm = TRUE)
+  } else {
+    p_hist <- p_hist +
+      geom_histogram(bins = 30, fill = col_hist, color = "white", linewidth = 0.2, na.rm = TRUE)
+  }
+
+  p_hist <- p_hist +
     labs(title = paste("Distribución:", etiqueta), x = etiqueta, y = "Frecuencia") +
     theme_minimal(base_size = 9) +
     theme(plot.title = element_text(size = 10))
@@ -1574,9 +1545,9 @@ contexto_cat <- c(
     "En el archivo depurado las 5 categorías están **notablemente ",
     "balanceadas** (ninguna se aparta mucho del 20% que correspondería a un ",
     "reparto perfecto), lo que las hace directamente comparables entre sí: ",
-    "las diferencias que se observan en los boxplots por posición de las ",
-    "secciones 2, 6, 7 y 9 reflejan el rol en cancha, no un desequilibrio ",
-    "en el tamaño de los grupos."
+    "las diferencias que se observan en el boxplot por posición de la ",
+    "sección 9 reflejan el rol en cancha, no un desequilibrio en el ",
+    "tamaño de los grupos."
   ),
   equipo = paste0(
     "muestra qué franquicias concentran más temporadas-jugador en el ",
@@ -2187,7 +2158,7 @@ ruido.
 
 **Implicación práctica.** Antes de usar esta matriz para seleccionar
 variables en un modelo predictivo (por ejemplo, para predecir
-`valor_sobre_reemplazo` o `porc_votos_mvp`) es indispensable:
+`valor_sobre_reemplazo`) es indispensable:
 
 1. **Excluir las identidades algebraicas** del punto 1 (usar las componentes
    o el total, nunca ambos).
@@ -2268,7 +2239,7 @@ variables en un modelo predictivo (por ejemplo, para predecir
   excluyendo las identidades algebraicas, para cuantificar cuántas
   dimensiones independientes tiene realmente el rendimiento de un jugador;
   (2) clustering para identificar **arquetipos** de jugador sobre el panel
-  de 10 variables clave; (3) un modelo de `porc_votos_mvp` o
-  `valor_sobre_reemplazo` usando solo predictores no redundantes; y (4) un
+  de 10 variables clave; (3) un modelo de `valor_sobre_reemplazo` usando
+  solo predictores no redundantes; y (4) un
   análisis explícito de **evolución temporal** que aproveche las 41
   temporadas disponibles.

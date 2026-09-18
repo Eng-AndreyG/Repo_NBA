@@ -629,6 +629,7 @@ ggplot(df, aes(x = porc_rebotes_tot_disp, y = porc_asistencias_equipo, color = p
   geom_point(alpha = 0.25, size = 0.8, na.rm = TRUE) +
   geom_smooth(aes(group = 1), method = "lm", se = FALSE, color = "black", linewidth = 1, na.rm = TRUE) +
   scale_color_manual(values = paleta_posicion) +
+  guides(color = guide_legend(title = "Posición", override.aes = list(shape = 15, size = 5, alpha = 1))) +
   labs(
     title = "Rebote (TRB%) vs. creación de juego (AST%)",
     subtitle = paste0("r = ", round(r_trb_ast, 3), " · color = posición · línea negra = tendencia global"),
@@ -1046,6 +1047,7 @@ ggplot(df, aes(x = puntos_pp, y = asistencias_pp, color = posicion)) +
   geom_point(alpha = 0.25, size = 0.8, na.rm = TRUE) +
   geom_smooth(aes(group = 1), method = "lm", se = FALSE, color = "black", linewidth = 1, na.rm = TRUE) +
   scale_color_manual(values = paleta_posicion) +
+  guides(color = guide_legend(title = "Posición", override.aes = list(shape = 15, size = 5, alpha = 1))) +
   labs(
     title = "Puntos por partido vs. asistencias por partido, por posición",
     subtitle = paste0("r = ", round(r_pts_ast, 3), " · color = posición · línea negra = tendencia global"),
@@ -1148,8 +1150,8 @@ solo no captura.
   (Michael Jordan, LeBron James) tampoco son bases, lo que confirma que
   "anotador" y "creador de juego" son habilidades, no posiciones.
 - **Siguientes pasos naturales hacia el análisis multivariado:** (1) un
-  modelo de regresión de `valor_sobre_reemplazo` o `porc_votos_mvp` que
-  controle simultáneamente por minutos, posición y temporada, en vez de
+  modelo de regresión de `valor_sobre_reemplazo` que controle
+  simultáneamente por minutos, posición y temporada, en vez de
   una variable a la vez; (2) clustering sobre el panel de 10 variables
   clave para formalizar los arquetipos híbridos detectados aquí de forma
   visual (relación 5); y (3) PCA sobre `datos_estandarizados` para

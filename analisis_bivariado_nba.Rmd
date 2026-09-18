@@ -1,6 +1,6 @@
 ---
 title: "Análisis Bivariado: Estadísticas de Jugadores de la NBA"
-subtitle: "10 relaciones entre variables clave del dataset `nbaFINAL.csv` (temporadas 1982-2022), con control por posición, agrupaciones por rango y variables derivadas"
+subtitle: "11 relaciones entre variables clave del dataset `nbaFINAL.csv` (temporadas 1982-2022), con control por posición, agrupaciones por rango y variables derivadas"
 author: "Análisis exploratorio de datos (EDA)"
 date: "`r format(Sys.Date(), '%d de %B de %Y')`"
 output:
@@ -136,13 +136,14 @@ relaciones <- tribble(
   "7. Oportunidad vs. valor total", "minutos_totales vs. valor_sobre_reemplazo", "Boxplots por decil de minutos", "¿El valor crece proporcional a los minutos, o se acelera?",
   "8. Manejo de balón vs. pérdidas normalizadas", "porc_uso_jugador vs. porc_perdidas_jugada", "Dispersión + recta de ajuste", "¿Más protagonismo implica más riesgo de pérdida por jugada?",
   "9. Contexto de equipo vs. impacto defensivo", "porc_victorias_equipo vs. masmenos_defensivo", "Dispersión + recta de ajuste + cuadrante", "¿Los buenos defensores solo aparecen en equipos ganadores?",
-  "10. Experiencia vs. eficiencia, por edad de entrada", "experiencia (derivada) vs. indice_eficiencia, por edad_entrada (derivada)", "Boxplots agrupados por bloque de experiencia y edad de entrada", "¿Un novato que entra joven rinde distinto, a igual experiencia, que uno que entra mayor?"
+  "10. Experiencia vs. eficiencia, por edad de entrada", "experiencia (derivada) vs. indice_eficiencia, por edad_entrada (derivada)", "Boxplots agrupados por bloque de experiencia y edad de entrada", "¿Un novato que entra joven rinde distinto, a igual experiencia, que uno que entra mayor?",
+  "11. Anotación vs. creación de juego, por posición", "puntos_pp vs. asistencias_pp, coloreado por posicion", "Dispersión coloreada por posición + recta de ajuste global", "¿Anotar mucho implica asistir poco, o ese supuesto compromiso no se cumple?"
 )
 
 relaciones %>%
   kable(
     col.names = c("Relación", "Variables", "Técnica", "Pregunta que responde"),
-    caption = "Las 10 relaciones bivariadas seleccionadas para esta sección"
+    caption = "Las 11 relaciones bivariadas seleccionadas para esta sección"
   ) %>%
   kable_styling(
     bootstrap_options = c("striped", "hover", "condensed"),
@@ -553,6 +554,7 @@ ggplot(df, aes(x = porc_rebotes_tot_disp, y = porc_asistencias_equipo, color = p
   geom_point(alpha = 0.25, size = 0.8, na.rm = TRUE) +
   geom_smooth(aes(group = 1), method = "lm", se = FALSE, color = "black", linewidth = 1, na.rm = TRUE) +
   scale_color_manual(values = paleta_posicion) +
+  guides(color = guide_legend(title = "Posición", override.aes = list(shape = 15, size = 5, alpha = 1))) +
   labs(
     title = "Rebote (TRB%) vs. creación de juego (AST%)",
     subtitle = paste0("r = ", round(r_trb_ast, 3), " · color = posición · línea negra = tendencia global"),
@@ -939,6 +941,95 @@ liga tan pronto. Es exactamente el tipo de variable de confusión —la edad
 de entrada actuando como proxy del talento inicial— que una lectura causal
 ingenua de "la experiencia mejora el rendimiento" pasaría por alto.
 
+## 11. Anotación (puntos por partido) vs. creación de juego (asistencias por partido), por posición
+
+Esta relación contrasta los puntos por partido (`puntos_pp`) con las
+asistencias por partido (`asistencias_pp`). La gestión de las posesiones
+sugiere un compromiso lógico entre ambas variables: si un jugador lanza a
+canasta, no puede asistir a un compañero en esa misma jugada, por lo que
+sería razonable esperar que los perfiles de alta anotación registren pocas
+asistencias, y viceversa, separando a los finalizadores de los
+distribuidores de juego. Se colorea por `posicion` para examinar si ese
+supuesto compromiso se cumple dentro de cada rol o si, como en la relación
+5, existe un grupo que rompe la regla.
+
+```{r r11-calculo}
+r_pts_ast <- cor(df$puntos_pp, df$asistencias_pp, use = "pairwise.complete.obs")
+
+tabla_pts_ast <- df %>%
+  group_by(posicion) %>%
+  summarise(
+    puntos_mediana = median(puntos_pp, na.rm = TRUE),
+    asistencias_mediana = median(asistencias_pp, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(asistencias_mediana)
+
+orden_pos_ast2 <- tabla_pts_ast$posicion
+
+q_pts75 <- quantile(df$puntos_pp, 0.75, na.rm = TRUE)
+q_ast75 <- quantile(df$asistencias_pp, 0.75, na.rm = TRUE)
+```
+
+```{r r11-plot, fig.width=9.5, fig.height=6.5}
+ggplot(df, aes(x = puntos_pp, y = asistencias_pp, color = posicion)) +
+  geom_point(alpha = 0.25, size = 0.8, na.rm = TRUE) +
+  geom_smooth(aes(group = 1), method = "lm", se = FALSE, color = "black", linewidth = 1, na.rm = TRUE) +
+  scale_color_manual(values = paleta_posicion) +
+  guides(color = guide_legend(title = "Posición", override.aes = list(shape = 15, size = 5, alpha = 1))) +
+  labs(
+    title = "Puntos por partido vs. asistencias por partido, por posición",
+    subtitle = paste0("r = ", round(r_pts_ast, 3), " · color = posición · línea negra = tendencia global"),
+    x = "Puntos por partido", y = "Asistencias por partido"
+  ) +
+  tema_biv
+```
+
+```{r r11-tabla}
+tabla_pts_ast %>%
+  kable(
+    digits = c(0, 1, 1),
+    col.names = c("Posición", "Puntos/partido (mediana)", "Asistencias/partido (mediana)"),
+    caption = "Puntos y asistencias por partido, por posición (ordenado de menor a mayor asistencias)"
+  ) %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+```{r r11-tabla-hibridos}
+df %>%
+  filter(puntos_pp > q_pts75, asistencias_pp > q_ast75) %>%
+  slice_max(valor_sobre_reemplazo, n = 6) %>%
+  select(jugador, temporada, posicion, puntos_pp, asistencias_pp, valor_sobre_reemplazo) %>%
+  kable(
+    digits = c(0, 0, 0, 1, 1, 1),
+    col.names = c("Jugador", "Temporada", "Posición", "Puntos/partido", "Asistencias/partido", "VORP (valor total aportado)"),
+    caption = "Anotan y asisten a la vez: puntos y asistencias simultáneamente en el 25% más alto"
+  ) %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+**Interpretación:** la correlación es r = `r round(r_pts_ast, 3)`,
+positiva y de magnitud moderada, el signo contrario al que predeciría un
+compromiso estricto entre anotar y asistir. La tabla por posición explica
+por qué: los bases (PG) tienen una mediana de asistencias muy por encima
+del resto (`r round(tabla_pts_ast$asistencias_mediana[tabla_pts_ast$posicion == "PG"], 1)`,
+frente a `r round(min(tabla_pts_ast$asistencias_mediana[tabla_pts_ast$posicion != "PG"]), 1)`-`r round(max(tabla_pts_ast$asistencias_mediana[tabla_pts_ast$posicion != "PG"]), 1)`
+en las demás posiciones), pero sus puntos por partido no son los más
+bajos, sino que se ubican en el mismo rango que los de aleros y ala-pívots.
+Son los bases quienes empujan la relación hacia arriba al combinar buen
+volumen de anotación con muchas asistencias, y no un reparto estricto
+entre anotar o asistir dentro de cada posición. El grupo que aparece
+simultáneamente en el 25% más alto de ambas variables (tabla anterior) no
+está dominado por bases, como sugeriría la intuición de que el base es
+quien reparte, sino por escoltas y aleros con el balón en las manos —
+Michael Jordan y LeBron James concentran varias de las mejores temporadas
+de esta tabla—, jugadores que funcionan como el principal generador
+ofensivo de su equipo sin ocupar formalmente la posición de base. Para la
+construcción de una plantilla, esto confirma que anotador y creador de
+juego no son roles excluyentes que dependan de la posición asignada, sino
+habilidades que algunos jugadores de élite combinan a la vez, y que el
+dato de posición por sí solo no captura.
+
 # Conclusiones del análisis bivariado
 
 - **La correlación de Pearson resume bien algunas relaciones y esconde
@@ -977,3 +1068,11 @@ ingenua de "la experiencia mejora el rendimiento" pasaría por alto.
   (relación 10) no existen en `nbaFINAL.csv`; construirlas fue necesario
   para distinguir el efecto del desarrollo del efecto del sesgo de
   selección de quién llega joven a la liga.
+- **Un supuesto compromiso entre dos habilidades no siempre se cumple.**
+  Puntos vs. asistencias por partido (relación 11) es positiva
+  (r ≈ 0.59) y no negativa: anotar y crear juego comparten una causa común
+  —los minutos y el protagonismo ofensivo del jugador—, y son los bases
+  quienes empujan la relación hacia arriba, no una compensación general
+  entre roles. Los pocos jugadores que dominan ambas variables a la vez
+  (Michael Jordan, LeBron James) tampoco son bases, lo que confirma que
+  anotador y creador de juego son habilidades, no posiciones.
