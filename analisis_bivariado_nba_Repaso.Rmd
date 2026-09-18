@@ -1155,3 +1155,168 @@ solo no captura.
   visual (relación 5); y (3) PCA sobre `datos_estandarizados` para
   cuantificar cuántas dimensiones independientes hay realmente detrás de
   las relaciones exploradas en este documento.
+```{r}
+destacado <- df %>% filter(jugador == "Russell Westbrook")
+
+ggplot(df, aes(x = porc_rebotes_tot_disp, y = porc_asistencias_equipo, color = posicion)) +
+  geom_point(alpha = 0.25, size = 0.8, na.rm = TRUE) +
+  geom_smooth(aes(group = 1), method = "lm", se = FALSE, color = "black", linewidth = 1, na.rm = TRUE) +
+  geom_point(
+    data = destacado,
+    aes(x = porc_rebotes_tot_disp, y = porc_asistencias_equipo),
+    inherit.aes = FALSE,
+    shape = 21, color = "black", fill = "#FFD400", size = 4, stroke = 1.1
+  ) +
+  geom_text(
+    data = destacado %>% filter(temporada == 2017),
+    aes(x = porc_rebotes_tot_disp, y = porc_asistencias_equipo,
+        label = paste0("Russell Westbrook (", temporada, ")")),
+    inherit.aes = FALSE, hjust = -0.1, vjust = -0.8,
+    size = 3.4, fontface = "bold", color = "grey20"
+  ) +
+  scale_color_manual(values = paleta_posicion) +
+  labs(
+    title = "Rebote (TRB%) vs. creación de juego (AST%)",
+    subtitle = paste0("r = ", round(r_trb_ast, 3), " · color = posición · línea negra = tendencia global"),
+    x = "% de rebotes disponibles capturados (TRB%)",
+    y = "% de canastas de compañeros asistidas (AST%)"
+  ) +
+  tema_biv
+```
+```{r}
+df_decil <- df %>% mutate(decil_minutos = ntile(minutos_totales, 10))
+
+top5_vorp <- df_decil %>%
+  filter(decil_minutos == 10) %>%
+  slice_max(valor_sobre_reemplazo, n = 5)
+
+top5_vorp %>%
+  select(jugador, temporada, equipo, minutos_totales, valor_sobre_reemplazo) %>%
+  kable(
+    digits = c(0, 0, 0, 0, 1),
+    col.names = c("Jugador", "Temporada", "Equipo", "Minutos totales", "VORP (valor total aportado)"),
+    caption = "Top 5 valores de VORP dentro del decil 10 de minutos jugados"
+  ) %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+
+top5_vorp <- top5_vorp %>%
+  mutate(
+    etiqueta = paste0(jugador, " (", temporada, ")"),
+    nudge_x = c(0.35, 0.15, 0.45, 0.15, 0.30),   # separa horizontalmente las etiquetas encimadas
+    nudge_y = c(0, 0, 0.25, -0.25, 0)             # separa verticalmente las dos que empatan en 11.4
+  )
+
+ggplot(df_decil, aes(x = factor(decil_minutos), y = valor_sobre_reemplazo)) +
+  geom_boxplot(fill = col_punto, color = "grey25", outlier.color = col_outlier,
+               outlier.alpha = 0.2, na.rm = TRUE) +
+  geom_point(
+    data = top5_vorp,
+    aes(x = factor(decil_minutos), y = valor_sobre_reemplazo),
+    inherit.aes = FALSE,
+    shape = 21, fill = "#FFD400", color = "black", size = 3.2, stroke = 1
+  ) +
+  geom_text(
+    data = top5_vorp,
+    aes(x = factor(decil_minutos), y = valor_sobre_reemplazo, label = etiqueta),
+    inherit.aes = FALSE,
+    position = position_nudge(x = top5_vorp$nudge_x, y = top5_vorp$nudge_y),
+    hjust = 0, size = 3, fontface = "bold", color = "grey20"
+  ) +
+  labs(
+    title = "VORP según decil de minutos jugados",
+    subtitle = "Decil 1 = menos minutos de la temporada · Decil 10 = más minutos · top 5 resaltados en dorado",
+    x = "Decil de minutos totales", y = "VORP (valor total aportado)"
+  ) +
+  tema_biv
+```
+
+```{r}
+lideres_puntos <- df %>%
+  group_by(temporada) %>%
+  slice_max(puntos_pp, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  select(temporada, jugador, equipo, puntos_pp)
+
+ggplot(df, aes(x = factor(temporada), y = puntos_pp)) +
+  geom_boxplot(fill = col_punto, color = "grey25", outlier.color = col_outlier,
+               outlier.alpha = 0.15, outlier.size = 0.6, na.rm = TRUE) +
+  geom_point(
+    data = lideres_puntos,
+    aes(x = factor(temporada), y = puntos_pp),
+    inherit.aes = FALSE, shape = 21, fill = "#FFD400", color = "black", size = 2.2, stroke = 0.8
+  ) +
+  geom_text(
+    data = lideres_puntos %>% filter(puntos_pp > 34),
+    aes(x = factor(temporada), y = puntos_pp, label = jugador),
+    inherit.aes = FALSE, hjust = -0.1, vjust = -0.4, size = 2.8, fontface = "bold", color = "grey20",
+    angle = 0
+  ) +
+  labs(
+    title = "Puntos por partido según temporada",
+    subtitle = "Cada caja es una temporada · puntos dorados = máximo anotador de esa temporada",
+    x = "Temporada", y = "Puntos por partido"
+  ) +
+  tema_biv +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, size = 7))
+
+lideres_puntos <- df %>%
+  group_by(temporada) %>%
+  slice_max(puntos_pp, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  select(temporada, jugador, equipo, puntos_pp) %>%
+  arrange(temporada)
+
+lideres_puntos %>%
+  kable(
+    digits = c(0, 0, 0, 1),
+    col.names = c("Temporada", "Jugador", "Equipo", "Puntos por partido"),
+    caption = "Máximo anotador por temporada (1982-2022)"
+  ) %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE) %>%
+  scroll_box(height = "350px")
+
+
+lideres_triples <- df %>%
+  group_by(temporada) %>%
+  slice_max(triples_anotados_pp, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  select(temporada, jugador, equipo, triples_anotados_pp)
+
+ggplot(df, aes(x = factor(temporada), y = triples_anotados_pp)) +
+  geom_boxplot(fill = col_punto, color = "grey25", outlier.color = col_outlier,
+               outlier.alpha = 0.15, outlier.size = 0.6, na.rm = TRUE) +
+  geom_point(
+    data = lideres_triples,
+    aes(x = factor(temporada), y = triples_anotados_pp),
+    inherit.aes = FALSE, shape = 21, fill = "#FFD400", color = "black", size = 2.2, stroke = 0.8
+  ) +
+  geom_text(
+    data = lideres_triples %>% filter(triples_anotados_pp > 4.5),
+    aes(x = factor(temporada), y = triples_anotados_pp, label = jugador),
+    inherit.aes = FALSE, hjust = -0.1, vjust = -0.4, size = 2.8, fontface = "bold", color = "grey20"
+  ) +
+  labs(
+    title = "Triples anotados por partido según temporada",
+    subtitle = "Cada caja es una temporada · puntos dorados = máximo anotador de triples de esa temporada",
+    x = "Temporada", y = "Triples anotados por partido"
+  ) +
+  tema_biv +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, size = 7))
+
+lideres_triples <- df %>%
+  group_by(temporada) %>%
+  slice_max(triples_anotados_pp, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  select(temporada, jugador, equipo, triples_anotados_pp) %>%
+  arrange(temporada)
+
+lideres_triples %>%
+  kable(
+    digits = c(0, 0, 0, 1),
+    col.names = c("Temporada", "Jugador", "Equipo", "Triples anotados por partido"),
+    caption = "Máximo anotador de triples por temporada (1982-2022)"
+  ) %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE) %>%
+  scroll_box(height = "350px")
+```
+
