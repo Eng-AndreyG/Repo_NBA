@@ -1380,7 +1380,7 @@ sin normalizar de ellas. Se presentan con **menor protagonismo visual**
 justamente porque la sección de correlación demuestra que su información
 está en gran medida **contenida en las 10 variables clave**.
 
-```{r interpretacion-funcion}
+```{r <-  <- -funcion}
 interpretar_numerica <- function(v) {
   x <- df[[v]]
   desc <- diccionario$Descripcion_academica[diccionario$Variable == v]
@@ -1664,7 +1664,7 @@ for (v in vars_categoricas) {
   cat(nota_extra_cat[[v]], "\n\n")
 }
 ```
-
+##solo trabajamos julian y yo andrey no hizo mi m
 ---
 
 # Estandarización y matriz de correlación
@@ -2122,18 +2122,7 @@ temporadas las durezas de calendario se compensan casi por completo. En
 estos casos, incluir ambas variables en un modelo no añade información:
 añade multicolinealidad.
 
-**4. Relaciones genuinamente empíricas (el hallazgo sustantivo).**
-La relación entre `porc_victorias_equipo` y `margen_victoria`
-(r = `r round(cor_winmov, 3)`) **sí es un hallazgo del mundo real**, no una
-identidad de fórmula: el margen de puntos promedio de un equipo predice casi
-perfectamente su porcentaje de victorias. Es una versión de la conocida
-***expectativa pitagórica*** de la analítica deportiva (popularizada por
-Bill James en béisbol): los equipos que dominan el marcador de forma
-consistente ganan en proporción muy predecible, porque a lo largo de miles
-de posesiones la suerte en los partidos ajustados se promedia. Que la
-relación emerja con esta fuerza en un dataset a nivel de **jugador** (donde
-ambas variables son en realidad atributos del equipo, repetidos en cada fila
-de su plantilla) confirma su robustez.
+
 
 Igualmente empírica —y más interesante para la evaluación individual— es la
 correlación **negativa** entre `porc_rebotes_tot_disp` y
@@ -2219,30 +2208,6 @@ variables en un modelo predictivo (por ejemplo, para predecir
   `r format(desvio_maximo, digits = 3, scientific = TRUE)`): lo que aporta
   el paso es **comparabilidad y verificabilidad**, no un cambio en los
   coeficientes.
-- **Hay que distinguir cuatro tipos de correlación** antes de interpretar:
-  identidades algebraicas
-  (`victorias_total = victorias_ofensiva + victorias_defensa`), relaciones
-  mecánicas de volumen (puntos vs. intentos de tiro), mediciones redundantes
-  del mismo concepto (eFG% vs. TS%, margen vs. margen ajustado) y hallazgos
-  genuinamente empíricos —el margen de victoria prediciendo el porcentaje de
-  victorias (r = `r round(cor_winmov, 3)`, *expectativa pitagórica*) y la
-  oposición entre rebote y creación de juego
-  (r = `r round(cor(df$porc_rebotes_tot_disp, df$porc_asistencias_equipo), 3)`,
-  especialización posicional).
-- **Advertencia temporal.** `porc_intentos_triple` correlaciona a
-  r = `r round(cor(df$porc_intentos_triple, df$temporada), 2)` con
-  `temporada`: las distribuciones agregadas de este documento **mezclan 41
-  temporadas con estilos de juego muy distintos**. Cualquier modelo sobre
-  variables de tiro debería incluir `temporada` como control o segmentar por
-  era.
-- **Siguientes pasos naturales:** (1) PCA sobre `datos_estandarizados`
-  excluyendo las identidades algebraicas, para cuantificar cuántas
-  dimensiones independientes tiene realmente el rendimiento de un jugador;
-  (2) clustering para identificar **arquetipos** de jugador sobre el panel
-  de 10 variables clave; (3) un modelo de `valor_sobre_reemplazo` usando
-  solo predictores no redundantes; y (4) un
-  análisis explícito de **evolución temporal** que aproveche las 41
-  temporadas disponibles.
 
 
 ---
