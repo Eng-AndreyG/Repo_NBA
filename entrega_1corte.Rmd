@@ -167,6 +167,8 @@ unidades_clave <- c(
 
 # Introducción
 
+https://www.kaggle.com/datasets/robertsunderhaft/nba-player-season-statistics-with-mvp-win-share
+
 Este documento presenta un **análisis exploratorio univariado y multivariado**
 del dataset **`nbaFINAL.csv`**, la versión **depurada** del dataset de
 estadísticas de jugadores de la NBA publicado originalmente por
