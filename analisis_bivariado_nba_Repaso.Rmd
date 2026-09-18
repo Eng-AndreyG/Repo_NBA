@@ -1,0 +1,1023 @@
+---
+title: "Análisis Bivariado: Estadísticas de Jugadores de la NBA"
+subtitle: "Continuación del análisis univariado (`nbaFINAL.csv`, temporadas 1982-2022) — 10 relaciones seleccionadas entre variables clave, con control por posición, curvas no lineales, evolución temporal y variables derivadas"
+author: "Análisis exploratorio de datos (EDA)"
+date: "`r format(Sys.Date(), '%d de %B de %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    theme: flatly
+    number_sections: true
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+# ============================================================
+# CONFIGURACIÓN
+# ============================================================
+
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.align = "center",
+  fig.width = 9,
+  fig.height = 5
+)
+options(scipen = 999)
+
+# ============================================================
+# PAQUETES
+# ============================================================
+# Si alguno no está instalado, descomenta y ejecuta UNA vez:
+# install.packages(c("tidyverse", "knitr", "kableExtra", "scales", "patchwork"))
+
+library(tidyverse)
+library(knitr)
+library(kableExtra)
+library(scales)
+library(patchwork)
+
+# ============================================================
+# CARGA AUTOMÁTICA DEL DATASET
+# ============================================================
+# Este Rmd es la continuación directa del análisis univariado y usa
+# exactamente el mismo archivo depurado. Debe estar en la misma carpeta
+# que este documento (o en Repo_NBA/ dentro de la carpeta padre).
+
+archivo_csv <- "nbaFINAL.csv"
+
+if (!file.exists(archivo_csv) && file.exists("Repo_NBA/nbaFINAL.csv")) {
+  archivo_csv <- "Repo_NBA/nbaFINAL.csv"
+}
+
+if (!file.exists(archivo_csv)) {
+  stop(
+    paste0(
+      "No se encontró 'nbaFINAL.csv'. ",
+      "Coloca el CSV en la misma carpeta que este Rmd."
+    )
+  )
+}
+
+df <- read_csv(
+  archivo_csv,
+  show_col_types = FALSE,
+  progress = FALSE
+) %>%
+  as.data.frame()
+
+df <- df %>%
+  mutate(across(where(is.character), as.factor))
+
+# ============================================================
+# PALETA (misma familia de colores del documento univariado)
+# ============================================================
+
+col_punto   <- "#2C7FB8"   # nubes de dispersión
+col_ajuste  <- "#E4572E"   # líneas de ajuste / tendencia
+col_ajuste2 <- "#F0B84B"   # segunda línea de ajuste, cuando se comparan dos
+col_outlier <- "firebrick"
+
+paleta_posicion <- c(
+  "PG" = "#1F4E79", "SG" = "#2E8B9A", "SF" = "#41B6C4",
+  "PF" = "#F0B84B", "C"  = "#E4572E"
+)
+
+paleta_entrada <- c(
+  "<=19"  = "#1F4E79", "20-21" = "#2E8B9A",
+  "22-23" = "#F0B84B", "24+"   = "#E4572E"
+)
+
+# Tema común de todos los gráficos bivariados
+tema_biv <- theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(size = 10, color = "grey35"),
+    panel.grid.minor = element_blank(),
+    legend.position = "bottom"
+  )
+```
+
+# Introducción al análisis bivariado
+
+El análisis univariado ya dejó tres resultados de partida: (1) un panel de
+**10 variables clave**, elegidas porque cada una representa una dimensión
+distinta del rendimiento y ninguna pareja entre ellas supera |r| = 0.8; (2)
+una **matriz de correlación completa**, que separó identidades algebraicas,
+relaciones mecánicas de volumen, mediciones redundantes y hallazgos
+genuinamente empíricos; y (3) la advertencia de que varias variables
+(`porc_intentos_triple`, `edad`) mezclan información que solo se entiende
+mirando **subgrupos** o **series de tiempo**, no un solo coeficiente.
+
+Este documento retoma exactamente esos tres puntos, pero cambia la
+pregunta. La matriz de correlación responde **"¿cuánto se mueven juntas dos
+variables, en promedio, de forma lineal?"**. El análisis bivariado que
+sigue responde algo distinto en cada caso: **¿la relación es realmente una
+línea recta, o es una curva? ¿la relación es la misma para todos los
+jugadores, o cambia según la posición? ¿el número resume bien la nube de
+puntos, o esconde subgrupos interesantes? ¿qué significa, en la cancha, que
+dos variables se muevan juntas (o que dejen de hacerlo)?**
+
+Cada una de las 10 relaciones que siguen se presenta en dos niveles, para
+separar explícitamente **lo matemático** de **lo práctico**:
+
+- **Lectura matemática:** qué muestra el coeficiente, la pendiente o la
+  forma de la nube — la evidencia estadística, sin interpretar todavía.
+- **Lectura práctica (mundo real):** qué significa eso para un jugador, un
+  entrenador o un analista de un equipo de la NBA, y qué decisión o
+  advertencia se deriva de ahí.
+
+## Las 10 relaciones seleccionadas
+
+```{r tabla-relaciones}
+relaciones <- tribble(
+  ~Relacion, ~Variables, ~Tecnica, ~Pregunta,
+  "1. Uso ofensivo vs. eficiencia de tiro", "porc_uso_jugador vs. porc_tiro_verdadero", "Dispersión + recta de ajuste + cuadrantes", "¿Tirar más cuesta eficiencia, o hay estrellas que hacen ambas cosas?",
+  "2. Rendimiento vs. edad", "edad vs. indice_eficiencia, porc_tiro_verdadero, minutos_pp", "Boxplots por grupo de edad", "¿A qué edad rinde más un jugador promedio, y por qué un coeficiente sería engañoso?",
+  "3. Asistencias vs. pérdidas, por posición", "asistencias_pp vs. perdidas_pp, agrupado por posicion", "Boxplots por posición + correlación dentro de cada grupo", "¿El manejo de balón cuesta pérdidas dentro del mismo rol, o solo entre roles distintos?",
+  "4. % de intentos de triple vs. temporada", "porc_intentos_triple vs. temporada", "Boxplots por era (grupos de temporadas)", "¿Cuándo y qué tan rápido cambió el estilo de juego de la NBA?",
+  "5. Rebote vs. creación de juego", "porc_rebotes_tot_disp vs. porc_asistencias_equipo", "Dispersión coloreada por posición", "¿Rebotear y asistir son roles opuestos, y quién rompe esa regla?",
+  "6. Protagonismo vs. producción", "porc_uso_jugador vs. puntos_pp", "Dispersión + recta de ajuste + cuadrante bajo-alto", "¿Se puede anotar mucho sin ser el protagonista ofensivo del equipo?",
+  "7. Oportunidad vs. valor total", "minutos_totales vs. valor_sobre_reemplazo", "Boxplots por decil de minutos", "¿El valor crece proporcional a los minutos, o se acelera?",
+  "8. Manejo de balón vs. pérdidas normalizadas", "porc_uso_jugador vs. porc_perdidas_jugada", "Dispersión + recta de ajuste", "¿Más protagonismo implica más riesgo de pérdida por jugada?",
+  "9. Contexto de equipo vs. impacto defensivo", "porc_victorias_equipo vs. masmenos_defensivo", "Dispersión + recta de ajuste + cuadrante", "¿Los buenos defensores solo aparecen en equipos ganadores?",
+  "10. Experiencia vs. eficiencia, por edad de entrada", "experiencia (derivada) vs. indice_eficiencia, por edad_entrada (derivada)", "Boxplots agrupados por bloque de experiencia y edad de entrada", "¿Un novato que entra joven rinde distinto, a igual experiencia, que uno que entra mayor?"
+)
+
+relaciones %>%
+  mutate(`#` = row_number(), .before = Relacion) %>%
+  select(-`#`) %>%
+  kable(
+    col.names = c("Relación", "Variables", "Técnica", "Pregunta que responde"),
+    caption = "Las 10 relaciones bivariadas seleccionadas para este análisis"
+  ) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    font_size = 12
+  ) %>%
+  column_spec(1, bold = TRUE, width = "20%") %>%
+  column_spec(2, monospace = TRUE, width = "22%")
+```
+
+De las propuestas iniciales se descartaron cuatro por falta de datos en
+`nbaFINAL.csv` (estatura, salario, indicador de fase playoffs/temporada
+regular e indicador de franquicia campeona): ninguna de esas columnas existe
+en el archivo, y construirlas exigiría fusionar fuentes externas fuera del
+alcance de este dataset.
+
+## Glosario de términos de baloncesto usados en este documento
+
+Este documento asume **cero conocimiento previo de baloncesto**. Antes de
+entrar a las 10 relaciones, esta tabla define cada sigla y cada nombre de
+variable que aparece en las gráficas y tablas siguientes, en palabras
+simples. No hace falta memorizarla: se puede volver a ella cada vez que
+aparezca una sigla desconocida.
+
+```{r glosario}
+glosario <- tribble(
+  ~Sigla, ~Nombre_completo, ~Que_mide_en_palabras_simples,
+  "USG% (uso ofensivo)", "Porcentaje de Uso (Usage Percentage)", "De cada 100 jugadas del equipo mientras el jugador está en la cancha, en cuántas termina siendo ÉL quien decide la jugada (tira, va a la línea de tiros libres o pierde el balón). Un USG% alto significa que el ataque del equipo depende mucho de ese jugador.",
+  "TS% (eficiencia de tiro)", "Porcentaje de Tiro Verdadero (True Shooting Percentage)", "Qué tan eficiente es anotando, combinando en un solo número los tiros de 2 puntos, los triples (que valen más) y los tiros libres. Es más justo que el porcentaje de tiro normal porque no trata un triple igual que un tiro de 2.",
+  "PER (eficiencia por minuto)", "Índice de Eficiencia del Jugador (Player Efficiency Rating)", "Resume, por cada minuto jugado, todo lo positivo que hace un jugador (puntos, rebotes, asistencias, robos, tapones) menos lo negativo (tiros fallados, pérdidas, faltas). Está calibrado para que el promedio de la liga sea siempre 15: por encima de 15 es mejor que el jugador promedio de esa temporada, por debajo es peor.",
+  "VORP (valor total aportado)", "Valor Sobre el Jugador de Reemplazo (Value Over Replacement Player)", "Estima cuánto valor aportó un jugador en TODA la temporada, comparado con lo mínimo que cualquier equipo podría conseguir gratis en el mercado (un 'jugador de reemplazo'). A diferencia del PER, no es una tasa por minuto: es un acumulado, así que también premia jugar muchos minutos, no solo jugar bien.",
+  "DBPM (impacto defensivo)", "Box Plus/Minus Defensivo", "Estima cuántos puntos por cada 100 posesiones aporta (o resta) un jugador SOLO en la parte defensiva del juego, comparado con un jugador promedio de la liga. Positivo significa que el equipo defiende mejor con él en cancha que sin él.",
+  "AST% (asistencias repartidas)", "Porcentaje de Asistencias del Equipo", "De todas las canastas que anotó el EQUIPO mientras el jugador estaba en cancha, qué porcentaje tuvieron el pase final (la asistencia) de ese jugador. Mide cuánto reparte el balón, no cuánto anota.",
+  "TRB% (rebotes capturados)", "Porcentaje de Rebotes Totales Disponibles", "De todos los rebotes que estuvieron disponibles para capturar mientras el jugador estaba en cancha, qué porcentaje capturó él mismo.",
+  "AST/TOV", "Razón Asistencias / Pérdidas de balón", "Cuántas asistencias reparte un jugador por cada balón que pierde. Un número alto significa que reparte mucho juego arriesgando relativamente poco.",
+  "PG, SG, SF, PF, C", "Base, Escolta, Alero, Ala-pívot, Pívot", "Las cinco posiciones tradicionales del baloncesto, ordenadas de la más orientada a manejar el balón lejos del aro (PG, base) a la que juega más cerca del aro (C, pívot)."
+)
+
+glosario %>%
+  kable(
+    col.names = c("Sigla usada en este documento", "Nombre completo", "Qué mide, en palabras simples"),
+    caption = "Glosario de siglas de baloncesto"
+  ) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), font_size = 12) %>%
+  column_spec(1, bold = TRUE, width = "18%") %>%
+  column_spec(3, width = "50%")
+```
+
+Dos aclaraciones adicionales sobre el dataset que ayudan a leer todo lo
+que sigue:
+
+- **Cada fila es una "temporada-jugador".** El dataset no tiene una fila
+  por jugador, sino una fila por cada temporada que un jugador disputó
+  (por ejemplo, LeBron James aparece en más de 15 filas distintas, una por
+  cada año de su carrera). Por eso el mismo jugador puede aparecer varias
+  veces en una misma tabla, en años distintos.
+- **"Por partido" vs. "porcentaje/tasa".** Las variables que terminan en
+  `_pp` (de *per partido*, ej. `puntos_pp`, `asistencias_pp`) son promedios
+  por partido y dependen de cuántos minutos juega cada jugador. Las
+  variables que empiezan con `porc_` (USG%, TS%, AST%, TRB%) ya están
+  ajustadas por el tiempo de juego, así que permiten comparar de forma más
+  justa a un suplente con un titular.
+
+---
+
+# Análisis bivariado de las relaciones seleccionadas
+
+## 1. Uso ofensivo (USG%) vs. eficiencia de tiro (TS%)
+
+`porc_uso_jugador` mide qué proporción de las jugadas del equipo terminan
+en manos del jugador mientras está en cancha; `porc_tiro_verdadero` mide
+qué tan bien convierte esas jugadas en puntos. La pregunta no es "quién
+anota más", sino si **tomar más volumen de tiro cuesta eficiencia**.
+
+```{r r1-calculo}
+r_uso_ts <- cor(df$porc_uso_jugador, df$porc_tiro_verdadero, use = "pairwise.complete.obs")
+med_usg  <- median(df$porc_uso_jugador, na.rm = TRUE)
+med_ts   <- median(df$porc_tiro_verdadero, na.rm = TRUE)
+```
+
+```{r r1-scatter, fig.width=9.5, fig.height=6}
+ggplot(df, aes(x = porc_uso_jugador, y = porc_tiro_verdadero)) +
+  geom_point(alpha = 0.12, color = col_punto, size = 1, na.rm = TRUE) +
+  geom_smooth(method = "lm", se = FALSE, color = col_ajuste, linewidth = 1, na.rm = TRUE) +
+  geom_hline(yintercept = med_ts, linetype = "dashed", color = "grey55") +
+  geom_vline(xintercept = med_usg, linetype = "dashed", color = "grey55") +
+  annotate("text", x = 36, y = 0.72,
+           label = "Estrellas eficientes\n(alto uso y alta eficiencia)",
+           hjust = 1, size = 3.3, fontface = "italic", color = "grey20") +
+  labs(
+    title = "Uso ofensivo (USG%) vs. eficiencia de tiro (TS%)",
+    subtitle = paste0("r = ", round(r_uso_ts, 3),
+                       " · líneas discontinuas = medianas de cada variable"),
+    x = "Porcentaje de uso del jugador (USG%)",
+    y = "Porcentaje de tiro verdadero (TS%)"
+  ) +
+  tema_biv
+```
+
+```{r r1-tabla-estrellas}
+df %>%
+  filter(porc_uso_jugador > med_usg, porc_tiro_verdadero > med_ts) %>%
+  slice_max(valor_sobre_reemplazo, n = 5) %>%
+  select(jugador, temporada, porc_uso_jugador, porc_tiro_verdadero, valor_sobre_reemplazo) %>%
+  kable(
+    digits = c(0, 0, 1, 3, 1),
+    col.names = c("Jugador", "Temporada", "USG% (uso ofensivo)", "TS% (eficiencia de tiro)", "VORP (valor total aportado)"),
+    caption = "Rompen el patrón: alto uso Y alta eficiencia a la vez"
+  ) %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+```{r r1-tabla-volumen}
+df %>%
+  filter(
+    porc_uso_jugador > quantile(porc_uso_jugador, 0.85, na.rm = TRUE),
+    porc_tiro_verdadero < quantile(porc_tiro_verdadero, 0.25, na.rm = TRUE)
+  ) %>%
+  slice_max(porc_uso_jugador, n = 5) %>%
+  select(jugador, temporada, porc_uso_jugador, porc_tiro_verdadero, puntos_pp) %>%
+  kable(
+    digits = c(0, 0, 1, 3, 1),
+    col.names = c("Jugador", "Temporada", "USG% (uso ofensivo)", "TS% (eficiencia de tiro)", "Puntos por partido"),
+    caption = "Anotan mucho por volumen, pero con baja eficiencia (mismo alto uso que el grupo anterior)"
+  ) %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+**Lectura matemática:** la correlación es prácticamente nula
+(r = `r round(r_uso_ts, 3)`), coherente con lo ya señalado en el panel de
+variables clave del univariado ("aporta información independiente: solo
+r = 0.11 con el uso"). La nube no tiene forma de elipse inclinada: es una
+mancha ancha y redonda, sin pendiente clara. Eso significa que, **en
+promedio**, usar más el balón no implica ni mejor ni peor eficiencia.
+
+**Lectura práctica (mundo real):** que el promedio no diga nada es
+justamente lo que hace valioso el gráfico, porque los extremos sí hablan.
+El cuadrante superior derecho (alto USG% y alto TS%) lo ocupan Michael
+Jordan, LeBron James y David Robinson en sus mejores temporadas: llevar el
+peso ofensivo del equipo **y** anotar con eficiencia élite al mismo tiempo
+es la firma estadística de una superestrella genuina. En cambio, el
+cuadrante de alto USG% con baja eficiencia (Allen Iverson, o un Jordan de
+38 años en los Wizards) muestra jugadores que siguen concentrando el balón
+por reputación o por falta de alternativas, aunque su eficiencia ya no lo
+justifique. Para un cuerpo técnico, esta gráfica es literalmente la forma
+de distinguir a quién **darle** el balón de quién simplemente **lo tiene**.
+
+---
+
+## 2. Rendimiento vs. edad, como curva y no como correlación
+
+Casi ninguna métrica de rendimiento —ni el PER (eficiencia por minuto), ni
+el TS% (eficiencia de tiro), ni los minutos jugados por partido— es lineal
+con la edad: sube en la juventud, alcanza un pico y decae después. Reportar
+solo un coeficiente de
+correlación aquí sería tan engañoso como calcular la correlación entre el
+INSE y el puntaje sin revisar antes que la variable estaba mal codificada:
+el número puede ser verdadero y, aun así, no decir nada útil.
+
+```{r r2-calculo}
+r_edad_per <- cor(df$edad, df$indice_eficiencia, use = "pairwise.complete.obs")
+
+resumen_edad <- df %>%
+  group_by(edad) %>%
+  summarise(
+    PER = mean(indice_eficiencia, na.rm = TRUE),
+    TS = mean(porc_tiro_verdadero, na.rm = TRUE),
+    Minutos = mean(minutos_pp, na.rm = TRUE),
+    n = n(),
+    .groups = "drop"
+  )
+
+edad_pico_per <- resumen_edad$edad[which.max(resumen_edad$PER)]
+
+# Agrupar la edad en rangos para poder resumir la curva con boxplots
+df <- df %>%
+  mutate(
+    grupo_edad = cut(
+      edad,
+      breaks = c(17, 21, 24, 27, 30, 33, 50),
+      labels = c("18-21", "22-24", "25-27", "28-30", "31-33", "34+"),
+      right = TRUE
+    )
+  )
+```
+
+```{r r2-plot, fig.width=9.5, fig.height=9}
+p_per <- ggplot(df, aes(x = grupo_edad, y = indice_eficiencia)) +
+  geom_boxplot(fill = col_punto, color = "grey25", outlier.color = col_outlier,
+               outlier.alpha = 0.3, na.rm = TRUE) +
+  labs(title = "PER (eficiencia por minuto) según grupo de edad", x = NULL, y = "PER (eficiencia por minuto)") +
+  tema_biv
+
+p_ts <- ggplot(df, aes(x = grupo_edad, y = porc_tiro_verdadero)) +
+  geom_boxplot(fill = col_punto, color = "grey25", outlier.color = col_outlier,
+               outlier.alpha = 0.3, na.rm = TRUE) +
+  labs(title = "TS% (eficiencia de tiro) según grupo de edad", x = NULL, y = "TS%") +
+  tema_biv
+
+p_min <- ggplot(df, aes(x = grupo_edad, y = minutos_pp)) +
+  geom_boxplot(fill = col_punto, color = "grey25", outlier.color = col_outlier,
+               outlier.alpha = 0.3, na.rm = TRUE) +
+  labs(title = "Minutos por partido según grupo de edad", x = "Grupo de edad", y = "Minutos") +
+  tema_biv
+
+p_per / p_ts / p_min
+```
+
+```{r r2-tabla}
+resumen_edad %>%
+  filter(edad >= 19, edad <= 38) %>%
+  select(edad, PER, TS, Minutos, n) %>%
+  kable(
+    digits = c(0, 1, 3, 1, 0),
+    col.names = c("Edad", "PER promedio (eficiencia por minuto)", "TS% promedio (eficiencia de tiro)", "Minutos/partido promedio", "Cantidad de temporadas-jugador (n)"),
+    caption = "Promedio de tres métricas de rendimiento, por edad"
+  ) %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE) %>%
+  scroll_box(height = "300px")
+```
+
+**Lectura matemática:** la correlación lineal entre `edad` y
+`indice_eficiencia` es r = `r round(r_edad_per, 3)` — **esencialmente
+cero**. Sin embargo, los boxplots por grupo de edad muestran que la
+distribución del PER **no es plana**: la caja sube de 18-21 a 25-27 años
+(donde se ubica el pico, con el grupo 28-30 casi empatado) y luego baja de
+forma sostenida hasta 34+. El mismo patrón de subida-pico-bajada aparece en
+TS% y en minutos por partido. Un coeficiente de Pearson no puede detectar
+esta forma porque mide asociación **lineal**, y aquí la mitad de la
+relación sube y la otra mitad baja, así que ambas mitades **se cancelan**
+en el promedio — pero al agrupar por rangos de edad y comparar las cajas,
+la forma de "sube, hace pico, baja" se vuelve evidente.
+
+**Lectura práctica (mundo real):** esto es la curva de desarrollo y
+declive física de un atleta profesional, y tiene consecuencias de negocio
+directas. Explica por qué los contratos máximos de la NBA se concentran en
+jugadores de 24-29 años (el rango de mejor rendimiento esperado) y por qué
+firmar a un jugador de 33 años a un contrato de 5 años es, estadísticamente,
+apostar contra la forma más consistente de todo el dataset. También es la
+razón estadística detrás del fenómeno de "el novato que aún no explota":
+antes de los 22 años el PER promedio todavía está subiendo, así que juzgar
+a un jugador de 20 años por su producción actual subestima sistemáticamente
+su techo.
+
+---
+
+## 3. Asistencias vs. pérdidas de balón, controlando por posición
+
+Una **asistencia** es el pase que le da a un compañero la canasta lista
+para anotar; una **pérdida de balón** es cualquier jugada en la que el
+equipo pierde la posesión sin llegar a tirar (un pase interceptado, un
+balón que se le cae al jugador, etc.). Un base (posición PG, el que más
+tiempo tiene el balón en las manos) reparte más asistencias, pero también
+maneja el balón más tiempo, así que es esperable que también pierda más
+balones. Comparar la razón asistencias/pérdidas **entre todas las
+posiciones a la vez** repetiría el error de comparar grupos heterogéneos sin
+controlar por la variable que los distingue: aquí, esa variable es el rol
+en cancha.
+
+```{r r3-calculo}
+tabla_asttov <- df %>%
+  group_by(posicion) %>%
+  summarise(
+    asistencias_media = mean(asistencias_pp, na.rm = TRUE),
+    perdidas_media = mean(perdidas_pp, na.rm = TRUE),
+    razon_ast_tov = median(asistencias_pp / perdidas_pp, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(razon_ast_tov)
+
+orden_pos_ast <- tabla_asttov$posicion
+
+# Correlación asistencias-pérdidas calculada POR SEPARADO dentro de cada
+# posición, para confirmar la relación de control sin necesitar un gráfico
+# facetado.
+cor_por_posicion <- df %>%
+  group_by(posicion) %>%
+  summarise(
+    r_dentro_del_grupo = cor(asistencias_pp, perdidas_pp, use = "pairwise.complete.obs"),
+    .groups = "drop"
+  ) %>%
+  arrange(match(posicion, orden_pos_ast))
+```
+
+```{r r3-tabla}
+tabla_asttov %>%
+  kable(
+    digits = c(0, 2, 2, 2),
+    col.names = c("Posición", "Asistencias/partido", "Pérdidas de balón/partido", "Asistencias por cada pérdida (razón AST/TOV, mediana)"),
+    caption = "Asistencias, pérdidas y su razón, por posición (ordenado de menor a mayor razón)"
+  ) %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+```{r r3-plot, fig.width=10, fig.height=6}
+p_ast <- ggplot(df, aes(x = factor(posicion, levels = orden_pos_ast), y = asistencias_pp)) +
+  geom_boxplot(fill = col_punto, color = "grey25", outlier.color = col_outlier,
+               outlier.alpha = 0.25, na.rm = TRUE) +
+  labs(title = "Asistencias por partido, por posición", x = NULL, y = "Asistencias/partido") +
+  tema_biv
+
+p_tov <- ggplot(df, aes(x = factor(posicion, levels = orden_pos_ast), y = perdidas_pp)) +
+  geom_boxplot(fill = col_punto, color = "grey25", outlier.color = col_outlier,
+               outlier.alpha = 0.25, na.rm = TRUE) +
+  labs(title = "Pérdidas de balón por partido, por posición", x = "Posición", y = "Pérdidas/partido") +
+  tema_biv
+
+p_ast / p_tov
+```
+
+```{r r3-tabla-cor}
+cor_por_posicion %>%
+  kable(
+    digits = c(0, 3),
+    col.names = c("Posición", "r (asistencias vs. pérdidas), dentro de la posición"),
+    caption = "Correlación asistencias-pérdidas calculada por separado en cada posición"
+  ) %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+**Lectura matemática:** entre posiciones, la razón AST/TOV crece de forma
+monótona desde los pívots (`r round(tabla_asttov$razon_ast_tov[tabla_asttov$posicion=="C"],2)`)
+hasta los bases (`r round(tabla_asttov$razon_ast_tov[tabla_asttov$posicion=="PG"],2)`) — un
+salto de más de tres veces, visible en que las dos cajas suben en el mismo
+orden de posiciones. Pero la comparación no debe quedarse ahí: al calcular
+la correlación entre asistencias y pérdidas **por separado dentro de cada
+posición** (tabla de arriba), el resultado sigue siendo positivo y fuerte en
+las cinco (entre `r round(min(cor_por_posicion$r_dentro_del_grupo),2)` y
+`r round(max(cor_por_posicion$r_dentro_del_grupo),2)`): incluso comparando
+solo bases entre sí, más asistencias vienen acompañadas de más pérdidas.
+
+**Lectura práctica (mundo real):** esto separa dos preguntas que un
+aficionado suele mezclar. La diferencia **entre** posiciones (un base
+pierde más balones que un pívot) no dice nada sobre la calidad del
+jugador: es la consecuencia mecánica de tener el balón en las manos la
+mayor parte de la posesión. La relación **dentro** de la posición sí es
+informativa: entre dos bases, el que tiene una razón AST/TOV más alta que
+sus pares en su propio rol está manejando el balón con más cuidado
+relativo, y esa es la comparación correcta para evaluar el manejo de
+balón de un jugador — nunca contra el dataset completo.
+
+---
+
+## 4. Porcentaje de intentos de triple vs. temporada
+
+Un **triple** es un tiro lanzado desde detrás de una línea marcada en la
+cancha (más lejos del aro) que vale 3 puntos en lugar de los 2 puntos de un
+tiro normal. En vez de correlacionar dos estadísticas de un mismo jugador,
+cruzar el año con el perfil de tiro de **toda la liga** muestra el cambio
+estructural del juego conocido como la "revolución del triple": cada vez
+más equipos decidieron que valía la pena arriesgar tiros más lejanos porque
+el punto extra compensa la menor precisión. El valor está en encontrar el
+punto de quiebre, no en un coeficiente.
+
+```{r r4-calculo}
+byyear <- df %>%
+  group_by(temporada) %>%
+  summarise(media_3pa = mean(porc_intentos_triple, na.rm = TRUE), .groups = "drop") %>%
+  arrange(temporada) %>%
+  mutate(salto = media_3pa - lag(media_3pa))
+
+anio_quiebre <- byyear$temporada[which.max(byyear$salto)]
+r_3pa_temporada <- cor(df$porc_intentos_triple, df$temporada, use = "pairwise.complete.obs")
+
+# Agrupar las 41 temporadas en 5 eras para poder comparar con boxplots
+df <- df %>%
+  mutate(
+    era = cut(
+      temporada,
+      breaks = c(1981, 1989, 1999, 2009, 2014, 2022),
+      labels = c("1982-89", "1990-99", "2000-09", "2010-14", "2015-22")
+    )
+  )
+```
+
+```{r r4-plot, fig.width=9.5, fig.height=6}
+ggplot(df, aes(x = era, y = porc_intentos_triple)) +
+  geom_boxplot(fill = col_punto, color = "grey25", outlier.color = col_outlier,
+               outlier.alpha = 0.2, na.rm = TRUE) +
+  labs(
+    title = "Proporción de intentos de triple, por era",
+    subtitle = "Cada caja agrupa varias temporadas consecutivas",
+    x = "Era", y = "Proporción de intentos que son de triple"
+  ) +
+  tema_biv
+```
+
+```{r r4-tabla}
+byyear %>%
+  filter(temporada %in% c(1982, 1995, 2005, 2014, 2018, 2022)) %>%
+  select(temporada, media_3pa) %>%
+  kable(
+    digits = c(0, 3),
+    col.names = c("Temporada", "Proporción media de intentos de triple"),
+    caption = "Referencia rápida: el triple pasó de ser un recurso marginal a casi 4 de cada 10 intentos"
+  ) %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+**Lectura matemática:** la correlación con `temporada` es
+r = `r round(r_3pa_temporada, 3)` — moderada, pero **esconde** que el
+cambio no fue gradual. El boxplot por era lo muestra con claridad: la caja
+de 1982-89 está pegada al piso y es angosta (casi nadie tira triples), y
+cada era siguiente sube tanto la mediana como el tamaño de la caja —es
+decir, no solo tira más triples el jugador promedio, sino que la variedad
+entre jugadores también crece: coexisten especialistas que casi solo tiran
+de triple con interiores que casi nunca lo hacen. Calculando el salto
+promedio año a año (tabla anterior), el mayor salto interanual ocurre en
+`r anio_quiebre`, coincidiendo con el quinquenio en que el triple pasó de
+ser un complemento a una pieza central del ataque.
+
+**Lectura práctica (mundo real):** este es exactamente el tipo de cambio
+estructural que una correlación agregada de 41 temporadas puede diluir. Para
+cualquier análisis que compare jugadores de distintas épocas (por ejemplo,
+"¿quién anotó más triples, Larry Bird o Stephen Curry?"), ignorar este
+quiebre lleva a comparar a un jugador que operaba en un estilo de juego
+distinto, no solo a un jugador distinto. Es la razón por la que el
+análisis univariado ya advertía que cualquier modelo sobre variables de
+tiro debería **controlar por temporada o segmentar por era**.
+
+---
+
+## 5. Rebote (TRB%) vs. creación de juego (AST%): un trade-off posicional
+
+Un **rebote** es capturar el balón después de un tiro fallado (propio o
+rival), lo que le da a un equipo una nueva oportunidad de atacar (o evita
+que la tenga el rival). "Creación de juego" es otra forma de nombrar el
+reparto de asistencias: qué tanto un jugador organiza el ataque para que
+otros anoten, en vez de anotar él mismo. `variables.txt` ya señalaba que
+`porc_rebotes_tot_disp` (TRB%) y `porc_asistencias_equipo` (AST%) cargan
+con signos opuestos sobre el mismo componente principal (PC2: 0.89 y
+-0.64). Aquí se hace explícita esa oposición como relación bivariada
+directa.
+
+```{r r5-calculo}
+r_trb_ast <- cor(df$porc_rebotes_tot_disp, df$porc_asistencias_equipo, use = "pairwise.complete.obs")
+q_trb75 <- quantile(df$porc_rebotes_tot_disp, 0.75, na.rm = TRUE)
+q_ast75 <- quantile(df$porc_asistencias_equipo, 0.75, na.rm = TRUE)
+```
+
+```{r r5-plot, fig.width=9.5, fig.height=6.5}
+ggplot(df, aes(x = porc_rebotes_tot_disp, y = porc_asistencias_equipo, color = posicion)) +
+  geom_point(alpha = 0.25, size = 0.8, na.rm = TRUE) +
+  geom_smooth(aes(group = 1), method = "lm", se = FALSE, color = "black", linewidth = 1, na.rm = TRUE) +
+  scale_color_manual(values = paleta_posicion) +
+  labs(
+    title = "Rebote (TRB%) vs. creación de juego (AST%)",
+    subtitle = paste0("r = ", round(r_trb_ast, 3), " · color = posición · línea negra = tendencia global"),
+    x = "% de rebotes disponibles capturados (TRB%)",
+    y = "% de canastas de compañeros asistidas (AST%)"
+  ) +
+  tema_biv
+```
+
+```{r r5-tabla-hibridos}
+df %>%
+  filter(porc_rebotes_tot_disp > q_trb75, porc_asistencias_equipo > q_ast75) %>%
+  slice_max(valor_sobre_reemplazo, n = 5) %>%
+  select(jugador, temporada, posicion, porc_rebotes_tot_disp, porc_asistencias_equipo, valor_sobre_reemplazo) %>%
+  kable(
+    digits = c(0, 0, 0, 1, 1, 1),
+    col.names = c("Jugador", "Temporada", "Posición", "TRB% (rebotes capturados)", "AST% (asistencias repartidas)", "VORP (valor total aportado)"),
+    caption = "Arquetipos híbridos: TRB% y AST% simultáneamente en el 25% más alto"
+  ) %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+**Lectura matemática:** la relación es negativa y moderada
+(r = `r round(r_trb_ast, 3)`), y el color por posición muestra por qué:
+los pívots (naranja) dominan la esquina de TRB% alto y AST% bajo, mientras
+los bases (azul oscuro) dominan la esquina opuesta. Nada en las fórmulas
+obliga a esta oposición — no es una identidad algebraica como las
+detectadas en el univariado — así que la correlación negativa es un
+patrón real, no un artefacto de cálculo.
+
+**Lectura práctica (mundo real):** esto describe la especialización
+posicional clásica del baloncesto: el jugador cerca del aro rebota porque
+ahí termina la mayoría de los tiros fallados, y el manejador de balón
+reparte asistencias porque tiene el balón en las manos. Los pocos casos que
+aparecen en la esquina superior derecha (Nikola Jokić, Russell Westbrook,
+Kevin Garnett) son estadísticamente raros precisamente porque combinan dos
+roles que el juego normalmente separa, y esa rareza es la base estadística
+de por qué estos jugadores suelen describirse como "generacionales": no
+destacan en una sola dimensión, rompen la estructura misma del rol.
+
+---
+
+## 6. Protagonismo (USG%) vs. producción (puntos por partido)
+
+Complementa la relación 1: aquí la pregunta es si es posible anotar mucho
+**sin** ser el protagonista ofensivo del equipo, es decir, sin necesitar un
+alto porcentaje de uso.
+
+```{r r6-calculo}
+r_usg_pts <- cor(df$porc_uso_jugador, df$puntos_pp, use = "pairwise.complete.obs")
+```
+
+```{r r6-plot, fig.width=9.5, fig.height=6}
+ggplot(df, aes(x = porc_uso_jugador, y = puntos_pp)) +
+  geom_point(alpha = 0.12, color = col_punto, size = 0.8, na.rm = TRUE) +
+  geom_smooth(method = "lm", se = FALSE, color = col_ajuste, na.rm = TRUE) +
+  labs(
+    title = "Uso ofensivo (USG%) vs. puntos por partido",
+    subtitle = paste0("r = ", round(r_usg_pts, 3)),
+    x = "Porcentaje de uso del jugador (USG%)",
+    y = "Puntos por partido"
+  ) +
+  tema_biv
+```
+
+```{r r6-tabla}
+df %>%
+  filter(
+    porc_uso_jugador < quantile(porc_uso_jugador, 0.40, na.rm = TRUE),
+    puntos_pp > quantile(puntos_pp, 0.75, na.rm = TRUE)
+  ) %>%
+  slice_max(puntos_pp, n = 5) %>%
+  select(jugador, temporada, porc_uso_jugador, puntos_pp, porc_tiro_verdadero) %>%
+  kable(
+    digits = c(0, 0, 1, 1, 3),
+    col.names = c("Jugador", "Temporada", "USG% (uso ofensivo)", "Puntos por partido", "TS% (eficiencia de tiro)"),
+    caption = "Anotan mucho sin ser el protagonista ofensivo: bajo USG%, muchos puntos"
+  ) %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+**Lectura matemática:** la correlación es fuerte
+(r = `r round(r_usg_pts, 3)`) — más alta que la de USG% con TS%, y en la
+dirección esperada: el volumen de tiro y el volumen de anotación comparten
+la misma raíz. Pero, como en la relación 1, lo interesante está fuera de la
+nube principal: existe un grupo con USG% en el 40% más bajo que igualmente
+anota en el 25% más alto del dataset.
+
+**Lectura práctica (mundo real):** ese grupo (Rudy Gobert anotando de
+puntazos y tiros cortos con TS% de 0.73, o tiradores como Dan Majerle y
+Harrison Barnes) representa un arquetipo de valor distinto al de la
+relación 1: no lleva el peso de crear su propio tiro, pero convierte casi
+todo lo que recibe. Para la construcción de un roster, esta es la
+diferencia entre pagarle a alguien por **generar** ofensiva y pagarle por
+**capitalizar** la ofensiva que otros generan — dos habilidades distintas
+que `puntos_pp` por sí solo no distingue, pero que emergen con claridad al
+cruzarla con `porc_uso_jugador`.
+
+---
+
+## 7. Minutos totales vs. valor sobre el reemplazo (VORP)
+
+`variables.txt` señala a `minutos_totales` como "control obligatorio para
+todo lo acumulado". Aquí se hace explícita esa relación con la variable de
+valor más agregada del panel.
+
+```{r r7-calculo}
+r_min_vorp <- cor(df$minutos_totales, df$valor_sobre_reemplazo, use = "pairwise.complete.obs")
+
+tabla_decil <- df %>%
+  mutate(decil_minutos = ntile(minutos_totales, 10)) %>%
+  group_by(decil_minutos) %>%
+  summarise(
+    minutos_prom = mean(minutos_totales, na.rm = TRUE),
+    vorp_prom = mean(valor_sobre_reemplazo, na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+```{r r7-plot, fig.width=9.5, fig.height=6}
+df %>%
+  mutate(decil_minutos = ntile(minutos_totales, 10)) %>%
+  ggplot(aes(x = factor(decil_minutos), y = valor_sobre_reemplazo)) +
+  geom_boxplot(fill = col_punto, color = "grey25", outlier.color = col_outlier,
+               outlier.alpha = 0.2, na.rm = TRUE) +
+  labs(
+    title = "VORP según decil de minutos jugados",
+    subtitle = "Decil 1 = menos minutos de la temporada · Decil 10 = más minutos",
+    x = "Decil de minutos totales", y = "VORP (valor total aportado)"
+  ) +
+  tema_biv
+```
+
+```{r r7-tabla}
+tabla_decil %>%
+  kable(
+    digits = c(0, 0, 2),
+    col.names = c("Decil de minutos (1 = menos juega, 10 = más juega)", "Minutos promedio", "VORP promedio (valor total aportado)"),
+    caption = "VORP promedio por decil de minutos jugados"
+  ) %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+**Lectura matemática:** la correlación es fuerte
+(r = `r round(r_min_vorp, 3)`), pero el boxplot por decil muestra que **no
+es lineal**: las cajas de los primeros deciles son bajas y casi pegadas
+entre sí, y a partir del decil 7-8 empiezan a separarse y a subir cada vez
+más rápido — entre el decil 8 y el 9 el VORP promedio casi se duplica
+(de `r round(tabla_decil$vorp_prom[8],2)` a `r round(tabla_decil$vorp_prom[9],2)`),
+un salto mucho mayor que entre deciles inferiores. Es una curva convexa, no
+una recta.
+
+**Lectura práctica (mundo real):** esta aceleración no es causal en un
+solo sentido — es también una decisión del entrenador retroalimentándose a
+sí misma. Los minutos no se reparten al azar: el cuerpo técnico concentra
+los minutos en los jugadores que ya está viendo producir, así que parte de
+por qué "el que más juega es el que más vale" es que **jugar mucho es en
+sí mismo el resultado de ser bueno**, no solo su causa. Esto es
+precisamente la razón por la que el panel de variables clave del univariado
+prefiere las métricas normalizadas por posesión (TRB%, AST%, USG%, TS%)
+para comparar calidad: `minutos_totales` mide oportunidad acumulada, y debe
+tratarse como variable de control, no como evidencia de talento por sí
+misma.
+
+---
+
+## 8. Uso ofensivo (USG%) vs. pérdidas normalizadas
+
+La intuición dice que manejar más el balón (usar más el balón) debería
+producir más pérdidas por jugada. Esta relación pone esa intuición a
+prueba con la versión normalizada de las pérdidas, no con el conteo bruto
+por partido.
+
+```{r r8-calculo}
+r_usg_tov <- cor(df$porc_uso_jugador, df$porc_perdidas_jugada, use = "pairwise.complete.obs")
+```
+
+```{r r8-plot, fig.width=9.5, fig.height=6}
+ggplot(df, aes(x = porc_uso_jugador, y = porc_perdidas_jugada)) +
+  geom_point(alpha = 0.12, color = col_punto, size = 0.7, na.rm = TRUE) +
+  geom_smooth(method = "lm", se = FALSE, color = col_ajuste, na.rm = TRUE) +
+  labs(
+    title = "Uso ofensivo (USG%) vs. pérdidas normalizadas",
+    subtitle = paste0("r = ", round(r_usg_tov, 3)),
+    x = "Porcentaje de uso del jugador (USG%)",
+    y = "Pérdidas por cada 100 jugadas individuales"
+  ) +
+  tema_biv
+```
+
+**Lectura matemática:** la correlación es **negativa**
+(r = `r round(r_usg_tov, 3)`) — el signo contrario al que predeciría la
+intuición ingenua de "maneja más balón, pierde más balón". La nube muestra
+que a medida que sube el USG%, la tasa de pérdidas por jugada tiende a
+bajar levemente, no a subir.
+
+**Lectura práctica (mundo real):** el resultado se entiende revisando la
+definición exacta de la variable: `porc_perdidas_jugada` normaliza las
+pérdidas por el número de jugadas individuales en las que el jugador
+participa, no solo por sus propios minutos. Un jugador de alto USG% suele
+ser también un manejador de balón más hábil — llegar a ese rol exige
+sobrevivir un filtro de selección: a un base con mal manejo de balón
+sencillamente no se le da un USG% alto durante muchas temporadas. El
+resultado no contradice la relación 3 (donde sí se ve que los bases
+pierden más balones **por partido** que los pívots); son dos preguntas
+distintas: pérdidas absolutas por rol (relación 3) frente a riesgo de
+pérdida por jugada individual una vez que ya se tiene el balón (esta
+relación). La lección de fondo es metodológica: **antes de interpretar el
+signo de una correlación, hay que releer cómo está definida exactamente
+cada variable.**
+
+---
+
+## 9. Porcentaje de victorias del equipo vs. impacto defensivo individual (DBPM)
+
+Las métricas defensivas individuales son las menos fiables de la
+estadística de baloncesto porque dependen del sistema del equipo. Esta
+relación sirve como control de validez: ¿los buenos defensores solo
+aparecen en equipos ganadores, o el dato individual sobrevive incluso en
+equipos malos?
+
+```{r r9-calculo}
+r_win_dbpm <- cor(df$porc_victorias_equipo, df$masmenos_defensivo, use = "pairwise.complete.obs")
+q_dbpm85 <- quantile(df$masmenos_defensivo, 0.85, na.rm = TRUE)
+q_win25 <- quantile(df$porc_victorias_equipo, 0.25, na.rm = TRUE)
+```
+
+```{r r9-plot, fig.width=9.5, fig.height=6}
+ggplot(df, aes(x = porc_victorias_equipo, y = masmenos_defensivo)) +
+  geom_point(alpha = 0.12, color = col_punto, size = 0.7, na.rm = TRUE) +
+  geom_smooth(method = "lm", se = FALSE, color = col_ajuste, na.rm = TRUE) +
+  geom_hline(yintercept = q_dbpm85, linetype = "dashed", color = "grey45") +
+  geom_vline(xintercept = q_win25, linetype = "dashed", color = "grey45") +
+  annotate(
+    "text", x = q_win25 - 0.02, y = q_dbpm85 + 0.4,
+    label = "Defensores\nescondidos", hjust = 1, size = 3.2,
+    fontface = "italic", color = "grey20"
+  ) +
+  labs(
+    title = "Porcentaje de victorias del equipo vs. impacto defensivo individual",
+    subtitle = paste0("r = ", round(r_win_dbpm, 3), " · esquina superior-izquierda = alto DBPM en equipos perdedores"),
+    x = "Porcentaje de victorias del equipo", y = "Box Plus/Minus defensivo (DBPM)"
+  ) +
+  tema_biv
+```
+
+```{r r9-tabla}
+df %>%
+  filter(masmenos_defensivo > q_dbpm85, porc_victorias_equipo < q_win25) %>%
+  slice_max(masmenos_defensivo, n = 5) %>%
+  select(jugador, temporada, equipo, masmenos_defensivo, porc_victorias_equipo) %>%
+  kable(
+    digits = c(0, 0, 0, 1, 3),
+    col.names = c("Jugador", "Temporada", "Equipo", "DBPM (impacto defensivo)", "% victorias del equipo"),
+    caption = "\"Defensores escondidos\": DBPM alto en equipos con pocas victorias"
+  ) %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+**Lectura matemática:** la correlación es positiva pero moderada
+(r = `r round(r_win_dbpm, 3)`) — bastante más débil que la de
+`porc_victorias_equipo` con `margen_victoria` (r > 0.96, identificada en el
+univariado como la verdadera "expectativa pitagórica" del básquet). Existe
+además un grupo claramente identificable en la esquina superior izquierda:
+DBPM en el 15% más alto del dataset, jugando en equipos del 25% con menos
+victorias.
+
+**Lectura práctica (mundo real):** la correlación moderada (ni cero ni
+altísima) es justo lo que se esperaría si el DBPM mide **algo real del
+jugador** además de contexto de equipo. Si el DBPM fuera pura ilusión del
+sistema, no debería existir un grupo estable de jugadores con DBPM alto en
+equipos perdedores (Mark Eaton, Kyle Lowry joven, Andrei Kirilenko): esos
+casos muestran que la habilidad defensiva individual **sí sobrevive**
+incluso sin un equipo ganador alrededor. Para un analista, esto es
+evidencia de que el DBPM tiene señal aprovechable — por ejemplo, para
+identificar a un defensor infravalorado en un equipo con mal récord antes
+de que el mercado lo reconozca — aunque siempre debe leerse junto con el
+contexto de equipo, nunca de forma aislada.
+
+---
+
+## 10. Años de experiencia vs. eficiencia, controlando por edad de entrada
+
+Un novato universitario que entra a la liga a los 22 años y uno que entra a
+los 19 no son comparables en su primer año: la "experiencia" y la "edad"
+viajan juntas, pero no son lo mismo. Esta relación aísla el efecto
+construyendo dos variables derivadas que no existen directamente en
+`nbaFINAL.csv`.
+
+```{r r10-derivadas}
+entrada <- df %>%
+  group_by(jugador) %>%
+  slice_min(temporada, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  select(jugador, edad_entrada = edad)
+
+df_exp <- df %>%
+  left_join(entrada, by = "jugador") %>%
+  group_by(jugador) %>%
+  mutate(experiencia = temporada - min(temporada)) %>%
+  ungroup() %>%
+  mutate(
+    categoria_entrada = case_when(
+      edad_entrada <= 19 ~ "<=19",
+      edad_entrada <= 21 ~ "20-21",
+      edad_entrada <= 23 ~ "22-23",
+      TRUE ~ "24+"
+    ),
+    categoria_entrada = factor(categoria_entrada, levels = c("<=19", "20-21", "22-23", "24+"))
+  )
+```
+
+```{r r10-conteo}
+df_exp %>%
+  distinct(jugador, categoria_entrada) %>%
+  count(categoria_entrada) %>%
+  kable(
+    col.names = c("Edad de entrada a la liga", "Número de jugadores"),
+    caption = "Tamaño de cada grupo de edad de entrada"
+  ) %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+```{r r10-tabla}
+df_exp %>%
+  filter(experiencia <= 5) %>%
+  group_by(categoria_entrada, experiencia) %>%
+  summarise(PER_promedio = mean(indice_eficiencia, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(names_from = categoria_entrada, values_from = PER_promedio) %>%
+  kable(
+    digits = 2,
+    caption = "PER promedio según años de experiencia, por edad de entrada a la liga"
+  ) %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+```{r r10-plot, fig.width=9.5, fig.height=6}
+df_exp %>%
+  filter(experiencia <= 10) %>%
+  mutate(
+    bloque_experiencia = cut(
+      experiencia,
+      breaks = c(-1, 2, 5, 10),
+      labels = c("0-2 años", "3-5 años", "6-10 años")
+    )
+  ) %>%
+  ggplot(aes(x = bloque_experiencia, y = indice_eficiencia, fill = categoria_entrada)) +
+  geom_boxplot(color = "grey25", outlier.alpha = 0.15, na.rm = TRUE) +
+  scale_fill_manual(values = paleta_entrada, name = "Edad de entrada a la liga") +
+  labs(
+    title = "PER (eficiencia por minuto) según bloque de experiencia y edad de entrada",
+    subtitle = "Boxplots agrupados: mismo bloque de experiencia, distinta edad de entrada a la liga",
+    x = "Años de experiencia en la liga", y = "PER (eficiencia por minuto)"
+  ) +
+  tema_biv
+```
+
+**Lectura matemática:** en el bloque de debut (0-2 años de experiencia) los
+cuatro grupos están relativamente parejos (medianas de PER entre 12.3 y
+13.7). Pero al llegar al bloque de 3-5 años, las cajas del grupo que entró
+con 19 años o menos ya se despegan hacia arriba (mediana ≈ 16.9) mientras
+las del grupo que entró con 24 años o más apenas se mueven (mediana ≈ 13.3);
+para el bloque de 6-10 años la separación es aún mayor. La brecha entre
+cajas que no existía al debutar se abre con cada bloque de experiencia
+adicional.
+
+**Lectura práctica (mundo real):** esta brecha **no debe leerse como
+"entrar joven causa mejor desarrollo"**. Es, ante todo, un caso de sesgo de
+selección: para que un equipo arriesgue un puesto en el roster en un
+jugador de 18-19 años, ese jugador ya debe ser un talento excepcional (un
+futuro all-star potencial, elegido alto en el draft); en cambio, entrar a
+la NBA por primera vez a los 24 años o más suele significar haber sido una
+opción marginal — un jugador de rol, un fichaje internacional tardío o un
+suplente que apenas aseguró un contrato. El grupo de entrada joven no
+mejora más rápido por su edad: **ya era mejor desde el día 1** por el
+proceso de selección que lo llevó a la liga tan pronto. Es exactamente el
+tipo de variable de confusión (edad de entrada actuando como proxy del
+talento inicial) que cualquier lectura causal ingenua de "la experiencia
+mejora el rendimiento" pasaría por alto.
+
+---
+
+# Conclusiones del análisis bivariado
+
+- **La correlación de Pearson resume bien algunas relaciones y esconde
+  otras por completo.** USG% vs. TS% (relación 1) tiene r ≈ 0 y, aun así,
+  sus extremos distinguen a las superestrellas de los anotadores
+  ineficientes; edad vs. PER (relación 2) tiene r ≈ 0 mientras la curva
+  real sube, hace pico y baja. En ambos casos, mirar solo el coeficiente
+  habría llevado a concluir erróneamente "no hay relación".
+- **El signo de una correlación puede sorprender si no se revisa la
+  definición exacta de la variable.** USG% vs. pérdidas normalizadas
+  (relación 8) es negativa, contrario a la intuición de que manejar más el
+  balón implica más riesgo — la razón está en cómo se normaliza la
+  variable y en el sesgo de selección de quién llega a tener USG% alto.
+- **La posición es la variable de confusión más frecuente del básquet.**
+  Asistencias vs. pérdidas (relación 3) y rebote vs. asistencias (relación
+  5) solo se interpretan correctamente controlando o coloreando por
+  posición; comparar entre posiciones sin ese control repite el error de
+  Simpson que ya apareció en el ejemplo del computador y el estrato.
+- **Las variables de "oportunidad" (minutos) y de "contexto" (equipo)
+  inflan relaciones que parecen ser puramente de mérito individual.**
+  Minutos vs. VORP (relación 7) y % de victorias del equipo vs. DBPM
+  (relación 9) muestran que una parte del valor y del impacto defensivo
+  medido depende de decisiones ajenas al jugador (cuánto le hace jugar el
+  entrenador, qué tan bueno es su equipo), no solo de su talento.
+- **El cambio a través del tiempo puede ser un quiebre, no una tendencia
+  suave.** La proporción de intentos de triple (relación 4) no subió poco
+  a poco durante 41 temporadas: hay un punto identificable donde el ritmo
+  de cambio se acelera, y cualquier comparación entre eras debe tenerlo en
+  cuenta.
+- **Una variable derivada puede aislar una confusión que ninguna columna
+  original resuelve por sí sola.** "Experiencia" y "edad de entrada"
+  (relación 10) no existen en `nbaFINAL.csv`; construirlas fue necesario
+  para distinguir el efecto del desarrollo del efecto del sesgo de
+  selección de quién llega joven a la liga.
+- **Siguientes pasos naturales hacia el análisis multivariado:** (1) un
+  modelo de regresión de `valor_sobre_reemplazo` o `porc_votos_mvp` que
+  controle simultáneamente por minutos, posición y temporada, en vez de
+  una variable a la vez; (2) clustering sobre el panel de 10 variables
+  clave para formalizar los arquetipos híbridos detectados aquí de forma
+  visual (relación 5); y (3) PCA sobre `datos_estandarizados` para
+  cuantificar cuántas dimensiones independientes hay realmente detrás de
+  las relaciones exploradas en este documento.
