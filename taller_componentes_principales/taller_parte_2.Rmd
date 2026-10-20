@@ -1,0 +1,74 @@
+# Taller — El mapa de su negocio
+
+**Estadística Multidimensional · 26158 · grupo 020‑81**
+**Por equipos · sobre el dataset propio · un `.Rmd` y su `.html` tejido**
+**Fecha de entrega y peso:** los define el docente al publicarlo.
+
+---
+
+En clase pusimos a 9 907 estudiantes en un mapa de dos dimensiones. No aparecieron «tipos» de
+estudiante como las especies de iris: la nube no tenía huecos. Pero con dos cortes en el mapa armamos
+la lista de tutorías: 1 257 a tutoría general, 1 221 a escritura y 381 a las dos.
+
+Ahora hagan el mapa **de su base, para el cliente de su caso de negocio**. El taller no se aprueba por
+dibujar el biplot. Se aprueba por **decirle al cliente qué ve en el mapa y qué decide con él**, contado
+en casos. Cada punto lleva **tres frases**: qué ven, qué significa para el cliente y qué decide él.
+
+---
+
+## 1. El mapa y sus direcciones (1,0)
+
+Con las variables numéricas del taller anterior (y la misma decisión sobre estandarizar):
+
+1. Dibujen sus casos en el plano de las dos primeras componentes. ¿Cuánta información guarda?
+2. **Pónganle nombre a cada dirección**: qué significa ir a la derecha y qué significa ir hacia
+   arriba, para su cliente.
+3. Fijen el signo de cada componente para que se lea fácil, y digan cómo lo fijaron.
+
+## 2. El biplot (1,0)
+
+Hagan el biplot: los casos como puntos y las variables como flechas.
+
+- ¿Qué flechas van juntas? Digan el ángulo aproximado entre ellas.
+- ¿Cuál va sola? ¿Alguna va en contra de otra?
+- Si hay muchas etiquetas encima, arréglenlas: un biplot que no se lee no cuenta.
+
+## 3. ¿Hay grupos o hay un continuo? (1,0)
+
+Miren la nube. **¿Tiene islas separadas por huecos, como setosa, o es una sola mancha?** Muéstrenlo
+con el gráfico y con una cifra: por ejemplo, dónde termina un grupo y dónde empieza el otro en la
+primera componente.
+
+## 4. ¿Los grupos que su cliente conoce se separan? (1,0)
+
+Coloreen el mapa por **una variable de grupo** que su cliente use para decidir (tipo de cliente,
+región, categoría, lo que tengan). Dibujen las elipses del 90 %.
+
+- ¿Se separan o solo se desplazan?
+- Muéstrenlo con dos cifras: la distancia entre los promedios, y qué parte de un grupo cae en la zona
+  del otro.
+- Cierren con la frase para el cliente: ¿le sirve ese grupo para decidir, o no?
+
+## 5. La decisión en el mapa (1,0)
+
+Propongan **uno o dos cortes** en el mapa que le sirvan a su cliente para actuar, y **cuenten cuántos
+casos caen en cada zona**. Digan qué haría el cliente con cada zona, y qué pasa si mueve el corte.
+
+---
+
+## Rúbrica — sobre 5,0
+
+| Criterio | Puntos |
+|---|--:|
+| Mapa con la información que guarda y las dos direcciones con nombre para el cliente | 1,0 |
+| Biplot legible, con los ángulos leídos: qué va junto, qué va solo | 1,0 |
+| Respuesta sustentada a si hay grupos o un continuo | 1,0 |
+| Grupo del cliente en el mapa: separa o desplaza, con dos cifras | 1,0 |
+| Cortes en el mapa, contados en casos, con la decisión de cada zona | 1,0 |
+| **Total** | **5,0** |
+
+**Descuentos:** un resultado sin ninguna frase de lectura, −0,2 cada uno. Decir que el mapa
+«encontró» grupos que ustedes definieron con cortes, −0,3. Afirmar que un grupo **causa** su posición
+en el mapa, −0,3.
+
+*Estadística Multidimensional · 26158 · periodo 2026‑3 · Jhon Alejandro Varón Robayo · Universidad Distrital.*
