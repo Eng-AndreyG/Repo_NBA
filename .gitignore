@@ -1,2 +1,5 @@
+# Ignorar archivos html
+*.html
 
 .Rproj.user
+
