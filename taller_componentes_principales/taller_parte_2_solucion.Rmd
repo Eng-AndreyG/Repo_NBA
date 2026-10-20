@@ -28,6 +28,10 @@ dec <- function(x, d = 2) format(round(x, d), nsmall = d, decimal.mark = ",")
 num <- function(x) format(x, big.mark = ".", decimal.mark = ",")
 
 col_pos <- c(PG = "#1b9e77", SG = "#7570b3", SF = "#e6ab02", PF = "#d95f02", C = "#e7298a")
+
+# Nombre de cada posición en español, con la sigla en inglés entre paréntesis
+nombres_pos <- c(PG = "Base (PG)", SG = "Escolta (SG)", SF = "Alero (SF)",
+                 PF = "Ala-pívot (PF)", C = "Pívot (C)")
 ```
 
 ```{r datos-pca}
@@ -138,6 +142,7 @@ pares_sel <- tribble(
   "porc_asistencias_equipo", "porc_rebotes_of_disp"
 ) %>%
   mutate(angulo = mapply(ang, a, b),
+         r_real = mapply(function(a, b) cor(X[[a]], X[[b]]), a, b),
          lectura = case_when(angulo < 35 ~ "Van juntas",
                              angulo > 145 ~ "Van en contra",
                              angulo > 70 & angulo < 110 ~ "Independientes",
@@ -145,19 +150,27 @@ pares_sel <- tribble(
 
 pares_sel %>%
   transmute(`Flecha 1` = etiquetas[a], `Flecha 2` = etiquetas[b],
-            `Ángulo (°)` = round(angulo), `Lectura` = lectura) %>%
-  kable(caption = "Ángulos aproximados entre flechas")
+            `Ángulo (°)` = round(angulo), `Lectura` = lectura,
+            `r real` = dec(r_real)) %>%
+  kable(caption = "Ángulos entre flechas y la correlación real que aproximan")
 
-mas_corta <- names(which.min(largo))
+# Calidad de representación de cada variable en el plano (comunalidad):
+# fracción de su varianza que capturan C1 y C2 juntas (0 = nada, 1 = toda).
+calidad <- rowSums((pca$rotation[, 1:2] %*% diag(pca$sdev[1:2]))^2)
+mas_corta <- names(which.min(calidad))
+segunda_corta <- names(sort(calidad))[2]
+r_interior <- range(cor(X[, c("porc_rebotes_of_disp", "porc_rebotes_def_disp",
+                              "porc_tapones_equipo")])[upper.tri(diag(3))])
 ```
 
-- **Van juntas:** rebote ofensivo, rebote defensivo y tapones forman un abanico estrecho: entre rebote ofensivo y tapones hay apenas `r round(ang("porc_rebotes_of_disp","porc_tapones_equipo"))`° y entre los dos rebotes unos `r round(ang("porc_rebotes_of_disp","porc_rebotes_def_disp"))`°. Minutos y uso también van juntos (apenas `r round(ang("minutos_pp","porc_uso_jugador"))`°), con asistencias a unos `r round(ang("porc_uso_jugador","porc_asistencias_equipo"))`° del uso.
+- **Van juntas:** rebote ofensivo, rebote defensivo y tapones forman un abanico estrecho: entre rebote ofensivo y tapones hay apenas `r round(ang("porc_rebotes_of_disp","porc_tapones_equipo"))`° y entre los dos rebotes unos `r round(ang("porc_rebotes_of_disp","porc_rebotes_def_disp"))`°. Minutos y uso también van juntos (apenas `r round(ang("minutos_pp","porc_uso_jugador"))`°), con asistencias a unos `r round(ang("porc_uso_jugador","porc_asistencias_equipo"))`° del uso. Ojo: el plano **exagera** estos parecidos. Un ángulo de 1° sugeriría una correlación casi perfecta, pero la real entre rebote ofensivo y tapones es `r dec(cor(X$porc_rebotes_of_disp, X$porc_tapones_equipo))`, y la de minutos con uso es `r dec(cor(X$minutos_pp, X$porc_uso_jugador))` (última columna de la tabla).
 - **Van en contra:** el % de triples apunta casi al lado opuesto del rebote ofensivo (unos `r round(ang("porc_rebotes_of_disp","porc_intentos_triple"))`°). El que tira de tres no pelea el rebote en la pintura.
-- **Va sola:** el bloque interior y el bloque de protagonismo forman casi un ángulo recto (rebote defensivo y minutos, unos `r round(ang("porc_rebotes_def_disp","minutos_pp"))`°): ser interior no dice nada de cuánto juega. La flecha más corta es **`r etiquetas[mas_corta]`**, lo que indica que este plano casi no la representa; su información vive en la tercera componente.
+- **Independientes:** el bloque interior y el bloque de protagonismo forman casi un ángulo recto (rebote defensivo y minutos, unos `r round(ang("porc_rebotes_def_disp","minutos_pp"))`°; su correlación real es `r dec(cor(X$porc_rebotes_def_disp, X$minutos_pp))`): ser interior no dice nada de cuánto juega.
+- **Mal representadas:** el plano sólo recoge `r pct(calidad[mas_corta], 0)` de cada 100 partes de la variación de **`r etiquetas[mas_corta]`** y `r pct(calidad[segunda_corta], 0)` de **`r etiquetas[segunda_corta]`** (frente a `r pct(max(calidad), 0)` de `r etiquetas[names(which.max(calidad))]`). Por eso sus flechas son las más cortas; su información vive sobre todo en la tercera componente.
 
-**Qué significa para el GM:** el perfil de un jugador tiene dos ejes casi independientes, *posición en cancha* y *protagonismo*, y dentro de cada eje varias columnas cuentan lo mismo. **Qué decide:** para describir a un candidato no necesita las tres columnas de rebote y tapón; le basta una. Los robos y la eficiencia (TS%) los debe revisar aparte, porque el mapa no los muestra bien.
+**Qué significa para el GM:** el perfil de un jugador tiene dos ejes casi independientes, *posición en cancha* y *protagonismo*, y dentro de cada eje varias columnas cuentan lo mismo. **Qué decide:** para una primera descripción de un candidato, una de las tres columnas de rebote y tapón resume bien el bloque; pero como entre ellas la correlación va de `r dec(r_interior[1])` a `r dec(r_interior[2])`, no son intercambiables y para fichar a un interior debe mirar las tres. Los robos y la eficiencia (TS%) los debe revisar aparte, porque el mapa no los muestra bien.
 
-*Nota de lectura:* el ángulo entre flechas aproxima la correlación sólo para flechas largas, que son las bien representadas en el plano. Para las cortas hay que volver a la matriz de correlaciones del taller anterior.
+*Nota de lectura:* el ángulo entre flechas aproxima la correlación sólo para variables bien representadas en el plano, y aun así la aproximación es gruesa, porque el plano guarda `r pct(info12)` de cada 100 partes de la información. Para las cifras exactas hay que volver a la matriz de correlaciones del taller anterior.
 
 # 3. ¿Hay grupos o hay un continuo?
 
@@ -169,9 +182,18 @@ dd <- tibble(x = dens$x, y = dens$y)
 locmin <- which(diff(sign(diff(dd$y))) == 2) + 1
 locmax <- which(diff(sign(diff(dd$y))) == -2) + 1
 valle <- locmin[dd$x[locmin] > dd$x[locmax[1]]][1]
-pico1 <- max(dd$y[locmax[dd$x[locmax] < dd$x[valle]]])
-pico2 <- max(dd$y[locmax[dd$x[locmax] > dd$x[valle]]])
-x_valle <- dd$x[valle]
+# El valle es muy poco profundo: si otra versión de R o de la estimación de
+# densidad no lo encuentra, el informe no debe romperse. En ese caso se usa
+# el punto medio entre los promedios de ala-pívots (PF) y pívots (C).
+if (is.na(valle) || !any(dd$x[locmax] > dd$x[valle])) {
+  x_valle <- mean(c(mean(base$C1[base$posicion == "PF"]),
+                    mean(base$C1[base$posicion == "C"])))
+  valle <- which.min(abs(dd$x - x_valle))
+  pico2 <- max(dd$y[dd$x > x_valle])
+} else {
+  x_valle <- dd$x[valle]
+  pico2 <- max(dd$y[locmax[dd$x[locmax] > dd$x[valle]]])
+}
 ratio_valle <- dd$y[valle] / pico2
 en_valle <- sum(abs(base$C1 - x_valle) < 0.25)
 a_la_derecha <- sum(base$C1 > x_valle)
@@ -198,9 +220,19 @@ ggplot(base, aes(C1, C2)) +
 
 **Qué vemos.** La nube es **una sola mancha, sin huecos**. Sobre C1 hay una joroba grande de jugadores exteriores y un hombro más pequeño hacia la derecha (los interiores). El punto más bajo entre ambos está en C1 = `r dec(x_valle)`, pero ahí la densidad todavía es `r pct(ratio_valle, 0)` de cada 100 respecto de la segunda joroba, y en una franja de ±0,25 alrededor de ese punto caen **`r en_valle` jugadores**. No es una zona vacía como la que separa a *setosa* en iris. En C2 no aparece ni siquiera un hombro: el protagonismo cambia de forma gradual.
 
-**Qué significa para el GM.** No existen "tipos" cerrados de jugador en esta base. Entre el tirador puro y el pívot clásico hay jugadores en todos los puntos intermedios (aleros que rebotean, pívots que tiran de tres). **Qué decide:** no debe esperar que el mapa le entregue categorías listas. Si necesita grupos para su plantilla, tiene que definirlos él con cortes (punto 5), sabiendo que siempre habrá jugadores en la frontera.
+**Qué significa para el GM.** No existen "tipos" cerrados de jugador en esta base. Entre el tirador puro y el pívot clásico hay jugadores en todos los puntos intermedios (aleros, SF, que rebotean; pívots, C, que tiran de tres). **Qué decide:** no debe esperar que el mapa le entregue categorías listas. Si necesita grupos para su plantilla, tiene que definirlos él con cortes (punto 5), sabiendo que siempre habrá jugadores en la frontera.
 
 # 4. ¿Los grupos que el GM conoce se separan?
+
+El grupo que el GM ya conoce es la **posición nominal** del jugador. La base usa las cinco siglas en inglés; cuando un jugador tiene dos (por ejemplo "SG-PF") se toma la primera:
+
+| Sigla | Posición | Rol típico en cancha |
+|---|---|---|
+| PG | **Base** (*point guard*) | Sube el balón, organiza el ataque y reparte asistencias |
+| SG | **Escolta** (*shooting guard*) | Exterior anotador, tirador de media y larga distancia |
+| SF | **Alero** (*small forward*) | Jugador versátil de perímetro, anota y defiende en varias zonas |
+| PF | **Ala-pívot** (*power forward*) | Juega cerca del aro, rebotea, y hoy a menudo también abre la cancha |
+| C | **Pívot** (*center*) | El más alto: rebote, tapones y juego en la pintura |
 
 ```{r posiciones, fig.height = 7}
 centros <- base %>% group_by(posicion) %>% summarise(C1 = mean(C1), C2 = mean(C2), .groups = "drop")
@@ -209,8 +241,9 @@ ggplot(base, aes(C1, C2, color = posicion)) +
   geom_point(alpha = 0.25, size = 0.9) +
   stat_ellipse(type = "norm", level = 0.90, linewidth = 1) +
   geom_point(data = centros, size = 4, shape = 21, fill = "white", stroke = 1.5) +
-  geom_label_repel(data = centros, aes(label = posicion), size = 4, show.legend = FALSE, seed = 2) +
-  scale_color_manual(values = col_pos, name = "Posición") +
+  geom_label_repel(data = centros, aes(label = nombres_pos[as.character(posicion)]),
+                   size = 3.6, show.legend = FALSE, seed = 2) +
+  scale_color_manual(values = col_pos, labels = nombres_pos, name = "Posición") +
   coord_equal() +
   labs(title = "El mapa coloreado por posición, con elipses del 90 %",
        subtitle = "Puntos blancos: promedio de cada posición",
@@ -231,12 +264,13 @@ solape <- outer(pos, pos, Vectorize(dentro_de)); dimnames(solape) <- list(pos, p
 dist_c <- as.matrix(dist(centros[, c("C1", "C2")])); dimnames(dist_c) <- list(pos, pos)
 sd_c1 <- sd(base$C1)
 
-tibble(Par = c("PG – SG", "SG – SF", "SF – PF", "PF – C", "PG – C"),
-       a = c("PG", "SG", "SF", "PF", "PG"), b = c("SG", "SF", "PF", "C", "C")) %>%
-  mutate(`Distancia entre promedios` = dec(mapply(function(a, b) dist_c[a, b], a, b)),
+tibble(a = c("PG", "SG", "SF", "PF", "PG"), b = c("SG", "SF", "PF", "C", "C")) %>%
+  mutate(`A` = nombres_pos[a], `B` = nombres_pos[b],
+         `Distancia entre promedios` = dec(mapply(function(a, b) dist_c[a, b], a, b)),
          `% de A dentro de la elipse de B` = pct(mapply(dentro_de, a, b), 0),
          `% de B dentro de la elipse de A` = pct(mapply(dentro_de, b, a), 0)) %>%
   select(-a, -b) %>%
+  relocate(A, B) %>%
   kable(caption = paste0("Distancias en unidades del mapa (la desviación de C1 es ", dec(sd_c1), ")"))
 
 d_pg_c <- dist_c["PG", "C"]; d_sf_pf <- dist_c["SF", "PF"]
@@ -244,16 +278,16 @@ s_pg_c <- solape["PG", "C"]; s_c_pg <- solape["C", "PG"]
 s_sf_pf <- solape["SF", "PF"]; s_pf_sf <- solape["PF", "SF"]
 ```
 
-**Qué vemos.** Las posiciones **se desplazan en orden** sobre C1, de base (izquierda) a pívot (derecha). En C2 casi todas quedan a la misma altura, salvo los bases, que suben (promedio de C2 = `r dec(centros$C2[centros$posicion == "PG"])` frente a valores entre `r dec(min(centros$C2[centros$posicion != "PG"]))` y `r dec(max(centros$C2[centros$posicion != "PG"]))` del resto) porque las asistencias empujan esa componente. Las vecinas **no se separan**: el `r pct(s_sf_pf, 0)` % de los aleros (SF) cae dentro de la elipse de los ala-pívots (PF), con promedios a `r dec(d_sf_pf)` unidades. Sólo los extremos se separan de verdad: base y pívot tienen promedios a `r dec(d_pg_c)` unidades, y apenas el `r pct(s_pg_c, 0)` % de los bases cae en la zona de los pívots (y el `r pct(s_c_pg, 0)` % de los pívots en la de los bases).
+**Qué vemos.** Las posiciones **se desplazan en orden** sobre C1, de izquierda a derecha: base (PG, C1 promedio = `r dec(centros$C1[centros$posicion == "PG"])`), escolta (SG, `r dec(centros$C1[centros$posicion == "SG"])`), alero (SF, `r dec(centros$C1[centros$posicion == "SF"])`), ala-pívot (PF, `r dec(centros$C1[centros$posicion == "PF"])`) y pívot (C, `r dec(centros$C1[centros$posicion == "C"])`). Base y escolta casi coinciden sobre C1: los separa C2. En C2 casi todas quedan a la misma altura, salvo los bases (PG), que suben (promedio de C2 = `r dec(centros$C2[centros$posicion == "PG"])` frente a valores entre `r dec(min(centros$C2[centros$posicion != "PG"]))` y `r dec(max(centros$C2[centros$posicion != "PG"]))` del resto) porque las asistencias empujan esa componente. Las vecinas **no se separan**: el `r pct(s_sf_pf, 0)` % de los aleros (SF) cae dentro de la elipse de los ala-pívots (PF), con promedios a `r dec(d_sf_pf)` unidades. Como la elipse de cada grupo contiene por construcción al 90 % de sus propios jugadores, un `r pct(s_sf_pf, 0)` % es un solapamiento casi total. Sólo los extremos se separan de verdad: base (PG) y pívot (C) tienen promedios a `r dec(d_pg_c)` unidades, y apenas el `r pct(s_pg_c, 0)` % de los bases cae en la zona de los pívots (y el `r pct(s_c_pg, 0)` % de los pívots en la de los bases).
 
-**Qué significa para el GM.** La posición nominal le dice *aproximadamente* dónde juega alguien, pero no lo que hace: un SF y un PF pueden tener perfiles intercambiables, y fuera de los bases la posición no dice nada del protagonismo. **Qué decide:** la posición le sirve sólo para distinguir los extremos (base frente a pívot). Para armar la plantilla debe buscar por coordenadas en el mapa (*"necesito un jugador con C1 alto"*), no por la etiqueta de la posición.
+**Qué significa para el GM.** La posición nominal le dice *aproximadamente* dónde juega alguien, pero no lo que hace: un alero (SF) y un ala-pívot (PF) pueden tener perfiles intercambiables, y fuera de los bases (PG) la posición no dice nada del protagonismo. **Qué decide:** la posición le sirve sólo para distinguir los extremos (base frente a pívot). Para armar la plantilla debe buscar por coordenadas en el mapa (*"necesito un jugador con C1 alto"*), no por la etiqueta de la posición.
 
 # 5. La decisión en el mapa
 
 Proponemos **dos cortes** definidos por nosotros, no hallados por el mapa:
 
-- **Corte vertical en C1 = `r dec(x_valle)`**, el punto más bajo de la densidad del punto 3: separa *interiores* (derecha) de *exteriores* (izquierda).
-- **Corte horizontal en C2 = 1**, una desviación por encima del promedio en protagonismo: separa a los *ejes* del equipo (arriba) de los jugadores de *rotación* (abajo).
+- **Corte vertical en C1 = `r dec(x_valle)`**, el punto más bajo de la densidad del punto 3: separa *interiores* (derecha) de *exteriores* (izquierda). Como el valle es muy poco profundo, el corte es una convención razonable, no una frontera natural.
+- **Corte horizontal en C2 = 1**, unas `r dec(1 / sd(base$C2), 1)` desviaciones por encima del promedio en protagonismo (la desviación de C2 es `r dec(sd(base$C2))`, no 1, porque el PCA no reescala las componentes): separa a los *ejes* del equipo (arriba) de los jugadores de *rotación* (abajo).
 
 ```{r zonas}
 c1_corte <- x_valle; c2_corte <- 1
@@ -279,7 +313,7 @@ ggplot(base, aes(C1, C2, color = zona)) +
 
 ```{r conteo-zonas}
 accion <- c("A · Ejes exteriores"   = "Prioridad de renovación o fichaje; revisar eficiencia antes de un contrato máximo",
-            "B · Ejes interiores"   = "Pívots dominantes, escasos: proteger o pagar por ellos",
+            "B · Ejes interiores"   = "Pívots (C) dominantes, escasos: proteger o pagar por ellos",
             "C · Rotación exterior" = "Mercado de complementos baratos (tiradores, defensores); contratos cortos",
             "D · Rotación interior" = "Suplentes de pintura; reemplazables, contratos mínimos")
 
@@ -296,6 +330,20 @@ zA <- sum(base$zona == "A · Ejes exteriores"); zB <- sum(base$zona == "B · Eje
 topAB <- sum(base$top & base$C2 >= c2_corte)
 ```
 
+```{r zonas-posicion}
+# ¿Qué posiciones caen en cada zona? (filas = zona, columnas = posición)
+tabla_zp <- base %>%
+  mutate(posicion = nombres_pos[as.character(posicion)],
+         posicion = factor(posicion, levels = nombres_pos)) %>%
+  count(zona, posicion) %>%
+  pivot_wider(names_from = posicion, values_from = n, values_fill = 0) %>%
+  rename(Zona = zona)
+kable(tabla_zp, caption = "Jugadores-temporada de cada posición en cada zona")
+
+pf_int <- mean(base$C1[base$posicion == "PF"] >= c1_corte)
+c_int  <- mean(base$C1[base$posicion == "C"]  >= c1_corte)
+```
+
 ```{r mover-corte}
 tibble(`Corte en C2` = c(0, 0.5, 1, 1.5, 2)) %>%
   mutate(`Casos arriba (ejes)` = sapply(`Corte en C2`, function(c) sum(base$C2 >= c)),
@@ -305,8 +353,10 @@ tibble(`Corte en C2` = c(0, 0.5, 1, 1.5, 2)) %>%
   kable(caption = "¿Qué pasa si el GM mueve el corte horizontal?")
 ```
 
-**Qué vemos.** Con los dos cortes quedan `r num(zA)` casos en la zona A y `r num(zB)` en la B. Entre las dos zonas de *ejes* reúnen `r topAB` de los `r k_top` jugadores de mayor rendimiento, aunque el VORP nunca entró al análisis. Las zonas C y D concentran la mayor parte de la liga y muy pocos jugadores de élite.
+**Qué vemos.** Con los dos cortes quedan `r num(zA)` casos en la zona A y `r num(zB)` en la B. Entre las dos zonas de *ejes* reúnen `r topAB` de los `r k_top` jugadores de mayor rendimiento, aunque el VORP nunca entró al análisis (en parte porque el VORP crece con los minutos jugados y los minutos por partido forman parte de C2). Las zonas C y D concentran la mayor parte de la liga y muy pocos jugadores de élite.
 
-**Qué significa para el GM.** El corte en C2 funciona como un filtro de mercado. Si lo baja a 0, la lista de ejes crece mucho y captura casi a todos los de élite, pero con mucha paja. Si lo sube a 1,5 o 2, la lista es corta y densa en estrellas, pero se le escapan jugadores valiosos. El corte en C1 no cambia el rendimiento: sólo reparte la lista entre exteriores e interiores según lo que necesite la plantilla.
+Por posición, el lado *interior* del corte es casi exclusivo de los pívots (C): ahí cae el `r pct(c_int, 0)` % de ellos, pero sólo el `r pct(pf_int, 0)` % de los ala-pívots (PF). Bases (PG), escoltas (SG) y aleros (SF) quedan prácticamente todos del lado exterior. Es decir, la mayoría de los ala-pívots de la era del triple ya juegan como exteriores según su perfil, aunque su etiqueta diga lo contrario.
+
+**Qué significa para el GM.** El corte en C2 funciona como un filtro de mercado. Si lo baja a 0, la lista de ejes crece mucho y captura casi a todos los de élite, pero con mucha paja. Si lo sube a 1,5 o 2, la lista es corta y densa en estrellas, pero se le escapan jugadores valiosos. El corte en C1 cambia poco el rendimiento (el `r pct(mean(base$top[base$C1 < c1_corte]), 0)` % de los exteriores y el `r pct(mean(base$top[base$C1 >= c1_corte]), 0)` % de los interiores son de élite): sobre todo reparte la lista entre exteriores e interiores según lo que necesite la plantilla.
 
 **Qué decide.** Para 2023 usa el corte en C2 = 1 como primera criba: revisa a fondo (con eficiencia, VORP y contrato) a los jugadores de 2022 que caen en A y B, y busca en C o D sólo complementos baratos para el rol que le falte. Las zonas son una regla de trabajo que definimos nosotros; el mapa no "encontró" cuatro tipos de jugador, y la posición en una zona no significa que la etiqueta cause el rendimiento.
