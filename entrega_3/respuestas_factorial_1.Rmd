@@ -1,7 +1,10 @@
 ---
 title: "Respuestas: Preguntas conceptuales — Análisis factorial I"
 subtitle: "¿La prueba mide una habilidad o dos? El encargo del empleador que contrata técnicos"
-author: "Estadística Multidimensional · Universidad Distrital Francisco José de Caldas"
+author:
+  - "Julian David Pulido Carreño - 20231020064"
+  - "David Martínez Rincón - 20222020167"
+  - "Andrey Camilo Gonzalez Caceres - 20231020070"
 date: "Octubre de 2026"
 output:
   html_document:
@@ -14,7 +17,6 @@ output:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
-# Las comprobaciones numéricas solo se ejecutan si el archivo de datos está en la carpeta.
 tiene_datos <- file.exists("PruebaSaber1.csv")
 ```
 

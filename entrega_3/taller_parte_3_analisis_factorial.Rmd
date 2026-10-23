@@ -1,7 +1,10 @@
 ---
 title: "¿Una sola habilidad? El factor de juego interior para el GM"
 subtitle: "Taller parte 3 · Estadística Multidimensional · 26158 · grupo 020-81"
-author: "Equipo NBA"
+author:
+  - "Julian David Pulido Carreño - 20231020064"
+  - "David Martínez Rincón - 20222020167"
+  - "Andrey Camilo Gonzalez Caceres - 20231020070"
 date: "`r format(Sys.Date(), '%d de %B de %Y')`"
 output:
   html_document:
@@ -16,12 +19,10 @@ knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
                       fig.align = "center", fig.width = 9, fig.height = 5.5)
 options(scipen = 999)
 
-# Si falta alguno, ejecutar UNA vez:
-# install.packages(c("tidyverse", "knitr", "psych", "GPArotation", "patchwork"))
 library(tidyverse)
 library(knitr)
-library(psych)        # KMO(), cortest.bartlett(), fa(), fa.parallel()
-library(GPArotation)  # rotación oblimin de fa() con 2 o más factores
+library(psych)
+library(GPArotation)
 library(patchwork)
 
 theme_set(theme_minimal(base_size = 12) +
@@ -29,13 +30,12 @@ theme_set(theme_minimal(base_size = 12) +
                   plot.subtitle = element_text(color = "grey35"),
                   panel.grid.minor = element_blank()))
 
-# Números con coma decimal, como en los talleres anteriores
+# Números con coma decimal
 dec <- function(x, d = 2) formatC(x, format = "f", digits = d, decimal.mark = ",")
 pct <- function(x, d = 0) dec(100 * x, d)
 num <- function(x) format(x, big.mark = ".", decimal.mark = ",")
 
-# Residuos de un modelo factorial: correlación real - correlación reproducida.
-# Para factores oblicuos la reproducida es L Phi L'. No depende del signo.
+# Residuos: correlación real menos la reproducida por el modelo
 resid_mat <- function(f, Rm) {
   L  <- unclass(f$loadings)
   Ph <- if (is.null(f$Phi)) diag(ncol(L)) else f$Phi
@@ -49,9 +49,8 @@ nombres_pos <- c(PG = "Base (PG)", SG = "Escolta (SG)", SF = "Alero (SF)",
 ```
 
 ```{r datos}
-# Misma base de los talleres 1 y 2:
-# NBA_espanol.csv, 2015-2022, >= 500 minutos, filas TOT conservadas.
-nba <- read.csv("NBA_espanol.csv", fileEncoding = "UTF-8")
+# Misma base de los talleres 1 y 2
+nba <- read.csv("../NBA_espanol.csv", fileEncoding = "UTF-8")
 
 base <- nba %>%
   filter(temporada >= 2015, minutos_totales >= 500) %>%
@@ -215,8 +214,7 @@ primera candidata a no pertenecer al grupo.
 ```{r fa1}
 fa1 <- fa(X, nfactors = 1, fm = "ml")
 
-# El signo del factor es arbitrario: se fija para que el rebote ofensivo cargue
-# positivo -> factor alto = más juego interior.
+# Se fija el signo para que el rebote ofensivo cargue positivo
 signo1 <- sign(fa1$loadings["porc_rebotes_of_disp", 1])
 L1 <- signo1 * fa1$loadings[, 1]
 
@@ -316,8 +314,7 @@ que_significa <- c(
 u_propia <- fa1$uniquenesses[var_propia]
 segunda_propia <- partes1$var[order(-partes1$propia)][2]
 
-# Puntaje de la habilidad para cada jugador (método de regresión de fa()),
-# con el mismo signo fijado arriba: alto = más juego interior.
+# Puntaje de cada jugador en el factor
 base$pintura <- signo1 * fa1$scores[, 1]
 r_propia_score <- cor(base$pintura, base[[var_propia]])
 ```
@@ -570,7 +567,7 @@ for (j in 1:2) {
     L2[, j] <- -L2[, j]; Phi[j, -j] <- -Phi[j, -j]; Phi[-j, j] <- -Phi[-j, j]
   }
 }
-# Se llama F1 al factor en que más carga el rebote ofensivo (la habilidad de pintura)
+# F1 = factor donde más carga el rebote ofensivo
 if (abs(L2["porc_rebotes_of_disp", 2]) > abs(L2["porc_rebotes_of_disp", 1])) {
   L2 <- L2[, 2:1]; Phi <- Phi[2:1, 2:1]
 }
