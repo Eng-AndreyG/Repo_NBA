@@ -1,0 +1,158 @@
+---
+title: "Respuestas: Preguntas conceptuales — Análisis factorial I"
+subtitle: "¿La prueba mide una habilidad o dos? El encargo del empleador que contrata técnicos"
+author: "Estadística Multidimensional · Universidad Distrital Francisco José de Caldas"
+date: "Octubre de 2026"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    theme: cosmo
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+# Las comprobaciones numéricas solo se ejecutan si el archivo de datos está en la carpeta.
+tiene_datos <- file.exists("PruebaSaber1.csv")
+```
+
+```{r datos, eval = tiene_datos, include = tiene_datos}
+library(psych)
+saber <- read.csv("PruebaSaber1.csv", sep = ";", fileEncoding = "latin1",
+                  stringsAsFactors = FALSE)
+s <- data.frame(
+  cuantitativo = saber$MOD_RAZONA_CUANTITAT_PUNT,
+  lectura      = saber$MOD_LECTURA_CRITICA_PUNT,
+  ciudadanas   = saber$MOD_COMPETEN_CIUDADA_PUNT,
+  ingles       = saber$MOD_INGLES_PUNT,
+  escritura    = saber$MOD_COMUNI_ESCRITA_PUNT,
+  estrato      = saber$FAMI_ESTRATOVIVIENDA
+)
+s$id <- seq_len(nrow(s))
+modulos <- c("cuantitativo", "lectura", "ciudadanas", "ingles", "escritura")
+s <- s[s$estrato != "Empleado obrero u operario", ]
+s$ingles[s$ingles == 0] <- NA
+for (m in modulos) s[[m]][s$id %in% c(671, 614) & s[[m]] == 0] <- NA
+X  <- s[complete.cases(s[modulos]), modulos]
+f1 <- fa(X, nfactors = 1, fm = "ml")
+```
+
+# ¿Qué diferencia hay entre la parte común y la parte propia de un módulo?
+
+Cada módulo, en escala estándar, se descompone así:
+
+$$\text{módulo} = \text{carga} \times \text{habilidad común} + \text{parte propia}, \qquad 1 = \text{carga}^2 + \text{varianza propia}$$
+
+- **Parte común:** es lo que el módulo **comparte con los otros cuatro**. Se debe a la habilidad común,
+  que nadie observa directamente sino que se deduce de cómo se mueven juntos los módulos. Su tamaño es
+  la **carga al cuadrado**: qué parte de las diferencias entre estudiantes en ese módulo viene de la
+  habilidad común.
+- **Parte propia:** es lo que sobra, lo que **ese examen mide y ningún otro**, más el error de
+  medición. No se mueve con los demás módulos.
+
+En la práctica: la parte común dice qué tanto se puede **predecir un módulo a partir de los otros**; la
+parte propia dice qué información aporta ese módulo que **no se obtiene mirando los demás**. Por
+ejemplo, lectura y ciudadanas son mayoritariamente comunes, mientras que en escritura 85 de cada 100
+partes son propias.
+
+```{r p1, eval = tiene_datos, include = tiene_datos}
+round(data.frame(comun = 100 * f1$communality, propia = 100 * f1$uniquenesses), 1)
+```
+
+# Escritura tiene 15 de cada 100 partes comunes. ¿Significa que el módulo está mal hecho? ¿Por qué?
+
+**No.** Que escritura tenga poca parte común solo significa que **comparte poco con los otros cuatro
+módulos**, no que mida mal.
+
+- La parte propia **no es lo mismo que error**. Incluye el error de medición, pero también todo lo que
+  es **específico** de escribir bien: organizar un texto, argumentar por escrito, redactar. Eso es
+  justamente lo que el módulo pretende medir y lo que los demás módulos no capturan.
+- Es más: si escritura tuviera casi todo común, sería **redundante**, porque se podría deducir de
+  lectura, ciudadanas y cuantitativo. Que sea mayoritariamente propia lo vuelve **valioso**: aporta
+  información que ningún otro módulo da.
+- Esto tiene consecuencias reales para el cliente: si la empresa contrata por la habilidad común, se le
+  escapan unos **6 de cada 10** de los mejores en escritura. Para un cargo de atención al cliente, el
+  requisito debe ser el módulo de escritura directamente.
+
+Un matiz honesto: el análisis factorial **no separa** dentro de la parte propia cuánto es habilidad
+específica y cuánto es error. Para afirmar que el módulo mide con precisión haría falta otra evidencia
+(su confiabilidad). Pero la poca parte común, por sí sola, **no es prueba de que el módulo esté mal
+hecho**.
+
+# Si la correlación entre dos módulos es casi igual al producto de sus cargas, ¿qué nos dice sobre cuántas habilidades hay?
+
+Que **una sola habilidad alcanza**. Si detrás de los módulos hay una única habilidad común, dos módulos
+se mueven juntos **solo porque la comparten**, y entonces:
+
+$$\text{correlación}(i, j) \approx \text{carga}_i \times \text{carga}_j$$
+
+Si existiera una segunda habilidad que uniera a algunos módulos (por ejemplo, una «verbal» que juntara
+lectura, escritura e inglés), esas parejas tendrían **más correlación de la que explica el producto de
+cargas**, y la cuenta no cuadraría.
+
+En los datos, la cuenta cuadra en las diez parejas: el error más grande (entre cuantitativo e inglés) es
+muy pequeño. Es decir, **no queda nada importante sin explicar que pida una segunda habilidad**. Para el
+cliente: la prueba no separa una habilidad cuantitativa de una verbal.
+
+```{r p3, eval = tiene_datos, include = tiene_datos}
+L <- as.numeric(f1$loadings[, 1]); names(L) <- modulos
+error <- cor(X) - outer(L, L); diag(error) <- 0
+round(error, 3)
+```
+
+# La segunda habilidad cae casi entera sobre lectura. ¿Por qué no la llamamos «habilidad verbal»?
+
+Por tres razones:
+
+1. **Una habilidad que se reduce a un solo módulo no es una habilidad nueva: es el módulo.** Una
+   habilidad común, por definición, es algo que **varios** módulos comparten. Si la segunda solo carga
+   en lectura, lo que está capturando es parte de lectura, no algo compartido.
+2. **Para llamarla «verbal» tendría que unir a los módulos verbales.** Una habilidad verbal debería
+   cargar también en escritura (y probablemente en inglés). Pero escritura apenas comparte con nadie: 85
+   de cada 100 partes son propias. Los módulos «comunicativos» no se agrupan.
+3. **Las dos habilidades van juntas casi 0,8.** Dos habilidades tan correlacionadas son casi la misma:
+   quien está alto en una casi siempre está alto en la otra. Además, en la sesión 6 se vio que esta
+   segunda habilidad **no es estable**: con otro método de cálculo (`minres`) ya no es lectura sino
+   ciudadanas frente a cuantitativo. Algo que cambia según el método no es una capacidad de los
+   estudiantes; es un acomodo de los números.
+
+Ponerle un nombre como «verbal» sería darle al cliente una etiqueta que los datos no respaldan.
+
+# ¿Por qué el resumen de la sesión 3 guardaba más de cada 100 que la habilidad común de hoy?
+
+Porque las dos técnicas **cuentan cosas distintas**:
+
+- El **resumen** (componentes principales) busca el número que más separa a los estudiantes, usando
+  **toda** la variación de los módulos. No distingue: mete en la componente **tanto la parte común como
+  la parte propia** de cada módulo.
+- La **habilidad común** (análisis factorial) solo explica lo que los módulos **comparten**. La parte
+  propia la **separa** y la reporta aparte, sin contarla.
+
+Entonces el resumen siempre guarda más: la diferencia entre los dos porcentajes es **justamente la parte
+propia que el resumen se llevaba de paso**. En escritura e inglés, donde la parte propia es grande, esa
+diferencia pesa mucho.
+
+Ninguno es mejor: responden preguntas distintas. Si el cliente quiere **ordenar** candidatos, sirve el
+resumen; si quiere saber **cuántas habilidades hay** para armar perfiles, sirve la habilidad común.
+
+```{r p5, eval = tiene_datos, include = tiene_datos}
+pca <- prcomp(X, scale. = TRUE)
+c(resumen_guarda          = round(100 * pca$sdev[1]^2 / 5, 1),
+  habilidad_comun_explica = round(100 * sum(f1$communality) / 5, 1))
+```
+
+# ¿Cuál de estas afirmaciones es correcta?
+
+**Respuesta: (b) La carga al cuadrado es la parte de las diferencias en un módulo que viene de la
+habilidad común.**
+
+Por qué las demás son incorrectas:
+
+| Opción | ¿Correcta? | Por qué |
+|---|---|---|
+| **(a)** La habilidad común se mide directamente en la prueba. | No | Nadie la observa ni la mide: se **deduce** de cómo se mueven juntos los módulos. |
+| **(b)** La carga al cuadrado es la parte de las diferencias en un módulo que viene de la habilidad común. | **Sí** | Es la definición: $1 = \text{carga}^2 + \text{varianza propia}$, y la carga al cuadrado es la parte común. |
+| **(c)** La parte propia es siempre error de medición. | No | Incluye error, pero también lo específico de cada módulo. En escritura es casi todo lo que el módulo mide. |
+| **(d)** Si hay dos habilidades, siempre son independientes. | No | Pueden ir juntas. En estos datos, con el giro que lo permite, las dos habilidades van juntas casi 0,8. |

@@ -1,0 +1,792 @@
+---
+title: "¿Una sola habilidad? El factor de juego interior para el GM"
+subtitle: "Taller parte 3 · Estadística Multidimensional · 26158 · grupo 020-81"
+author: "Equipo NBA"
+date: "`r format(Sys.Date(), '%d de %B de %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.align = "center", fig.width = 9, fig.height = 5.5)
+options(scipen = 999)
+
+# Si falta alguno, ejecutar UNA vez:
+# install.packages(c("tidyverse", "knitr", "psych", "GPArotation", "patchwork"))
+library(tidyverse)
+library(knitr)
+library(psych)        # KMO(), cortest.bartlett(), fa(), fa.parallel()
+library(GPArotation)  # rotación oblimin de fa() con 2 o más factores
+library(patchwork)
+
+theme_set(theme_minimal(base_size = 12) +
+            theme(plot.title = element_text(face = "bold"),
+                  plot.subtitle = element_text(color = "grey35"),
+                  panel.grid.minor = element_blank()))
+
+# Números con coma decimal, como en los talleres anteriores
+dec <- function(x, d = 2) formatC(x, format = "f", digits = d, decimal.mark = ",")
+pct <- function(x, d = 0) dec(100 * x, d)
+num <- function(x) format(x, big.mark = ".", decimal.mark = ",")
+
+# Residuos de un modelo factorial: correlación real - correlación reproducida.
+# Para factores oblicuos la reproducida es L Phi L'. No depende del signo.
+resid_mat <- function(f, Rm) {
+  L  <- unclass(f$loadings)
+  Ph <- if (is.null(f$Phi)) diag(ncol(L)) else f$Phi
+  Rm - L %*% Ph %*% t(L)
+}
+rmsr <- function(M) sqrt(mean(M[upper.tri(M)]^2))
+
+col_pos <- c(PG = "#1F4E79", SG = "#2E8B9A", SF = "#41B6C4", PF = "#F0B84B", C = "#E4572E")
+nombres_pos <- c(PG = "Base (PG)", SG = "Escolta (SG)", SF = "Alero (SF)",
+                 PF = "Ala-pívot (PF)", C = "Pívot (C)")
+```
+
+```{r datos}
+# Misma base de los talleres 1 y 2:
+# NBA_espanol.csv, 2015-2022, >= 500 minutos, filas TOT conservadas.
+nba <- read.csv("NBA_espanol.csv", fileEncoding = "UTF-8")
+
+base <- nba %>%
+  filter(temporada >= 2015, minutos_totales >= 500) %>%
+  mutate(posicion = sub("-.*", "", posicion),
+         posicion = factor(posicion, levels = c("PG", "SG", "SF", "PF", "C")))
+
+vars <- c("porc_rebotes_of_disp", "porc_rebotes_def_disp", "porc_tapones_equipo",
+          "razon_libres_intentos", "porc_intentos_triple",
+          "porc_tiro_verdadero", "porc_robos_equipo")
+
+etiquetas <- c(
+  porc_rebotes_of_disp  = "Rebote ofensivo (ORB%)",
+  porc_rebotes_def_disp = "Rebote defensivo (DRB%)",
+  porc_tapones_equipo   = "Tapones (BLK%)",
+  razon_libres_intentos = "Ataque al aro (FTr)",
+  porc_intentos_triple  = "% tiros de triple",
+  porc_tiro_verdadero   = "Eficiencia (TS%)",
+  porc_robos_equipo     = "Robos (STL%)"
+)
+# Etiquetas cortas para los gráficos con muchas variables o pares
+corta <- c(
+  porc_rebotes_of_disp  = "Reb. of.",
+  porc_rebotes_def_disp = "Reb. def.",
+  porc_tapones_equipo   = "Tapones",
+  razon_libres_intentos = "Ataque aro",
+  porc_intentos_triple  = "% triples",
+  porc_tiro_verdadero   = "TS%",
+  porc_robos_equipo     = "Robos"
+)
+
+base <- base %>% filter(if_all(all_of(vars), ~ !is.na(.x)))
+X <- base[, vars]
+n <- nrow(base)
+R <- cor(X)
+```
+
+# 1. Qué creemos que comparten
+
+El cliente sigue siendo el **General Manager (GM)** de una franquicia NBA
+que, al cierre de 2022, decide a quién fichar, renovar o dejar ir. En los
+talleres anteriores el PCA mostró que su tablero tiene un bloque que se repite:
+el **juego interior** (rebotes y tapones juntos, triples en contra). Ahora la
+pregunta es otra: ¿detrás de ese bloque hay **una sola habilidad** que no se
+ve, "dominar la pintura", y que produce todas esas columnas a la vez?
+
+El análisis factorial lo pregunta de forma distinta al PCA. El PCA resume
+toda la variación de las columnas; el análisis factorial separa, en cada
+columna, una **parte común** (la que explica la habilidad compartida) de una
+**parte propia** (lo que esa columna mide y ninguna otra comparte). Para el GM
+la diferencia importa: la parte común es lo que puede leer en una sola cifra,
+la parte propia es lo que tiene que seguir mirando aparte.
+
+Escogimos `r length(vars)` variables que, según nuestra hipótesis, dependen
+de esa habilidad de pintura (`r num(n)` jugadores-temporada):
+
+```{r tabla-vars}
+tibble(Variable = etiquetas[vars],
+       `Por qué creemos que comparte la habilidad` = c(
+         "Pelear el rebote en el aro rival exige estar en la pintura",
+         "Cerrar la posesión rival se hace cerca del aro propio",
+         "Proteger el aro es la tarea defensiva del interior",
+         "El que ataca el aro recibe faltas y va a la línea",
+         "El que vive en la pintura casi no tira de tres (relación negativa)",
+         "Tirar cerca del aro da tiros de alto porcentaje",
+         "Defensa activa: la intuición dice que el que tapona también roba")) %>%
+  kable(caption = "Variables escogidas y la razón para pensar que comparten algo")
+```
+
+Robos y eficiencia son, a propósito, las apuestas más arriesgadas: en el
+taller 2 quedaron mal representadas en el mapa, y aquí queremos saber si
+pertenecen a la habilidad o si van por su cuenta.
+
+## Las correlaciones de partida
+
+```{r cor-mapa, fig.width=7.5, fig.height=6}
+orden <- hclust(as.dist(1 - abs(R)))$order
+Rc <- R; dimnames(Rc) <- list(corta[vars], corta[vars])
+Rc <- Rc[orden, orden]
+
+as.data.frame(as.table(Rc)) %>%
+  setNames(c("v1", "v2", "r")) %>%
+  ggplot(aes(v1, v2, fill = r)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = dec(r)), size = 3.6) +
+  scale_fill_gradient2(low = "#b2182b", mid = "white", high = "#2166ac",
+                       limits = c(-1, 1), name = "r") +
+  coord_equal() +
+  labs(title = "Correlaciones entre las 7 columnas",
+       subtitle = "Ordenadas para que las que se parecen queden juntas",
+       x = NULL, y = NULL) +
+  theme(axis.text.x = element_text(angle = 35, hjust = 1), panel.grid = element_blank())
+```
+
+```{r cor-resumen}
+Ru <- R; Ru[lower.tri(Ru, diag = TRUE)] <- NA
+max_otro <- apply(abs(R) - diag(length(vars)), 1, max)
+mas_sola <- names(which.min(max_otro))
+media_abs <- mean(abs(Ru), na.rm = TRUE)
+```
+
+**Qué vemos.** La correlación absoluta promedio entre las columnas es
+`r dec(media_abs)`. La que va más sola es **`r etiquetas[mas_sola]`**: su
+correlación más fuerte con cualquier otra es apenas
+`r dec(max_otro[mas_sola])`. Si una habilidad común explica las columnas, esta
+debería ser la que menos parte común tenga; lo comprobamos en el punto 3.
+
+## ¿Vale la pena buscar algo común? Bartlett y KMO
+
+```{r bartlett}
+bart <- cortest.bartlett(R, n = n)
+```
+
+La prueba de esfericidad de Bartlett pregunta si la matriz de correlaciones
+podría ser la identidad (columnas que no comparten nada). Da
+χ² = `r num(round(bart$chisq))` con `r bart$df` grados de libertad
+(p `r ifelse(bart$p.value < 0.001, "< 0,001", paste("=", dec(bart$p.value, 3)))`):
+las columnas sí se relacionan. Con `r num(n)` casos esta prueba casi siempre
+rechaza, así que solo es un requisito mínimo; la medida que decide es el KMO.
+
+```{r kmo, fig.height=4.2}
+kmo <- KMO(X)
+nivel <- function(x) as.character(cut(x, c(0, 0.5, 0.6, 0.7, 0.8, 0.9, 1),
+                   labels = c("inaceptable", "miserable", "mediocre",
+                              "aceptable", "meritorio", "maravilloso")))
+
+tab_kmo <- tibble(var = vars, Variable = etiquetas[vars], MSA = kmo$MSAi[vars]) %>%
+  arrange(MSA) %>%
+  mutate(Variable = factor(Variable, levels = Variable))
+
+ggplot(tab_kmo, aes(MSA, Variable, fill = MSA >= 0.6)) +
+  geom_col(width = 0.7) +
+  geom_text(aes(label = dec(MSA)), hjust = -0.15, size = 3.5) +
+  geom_vline(xintercept = c(0.5, 0.6), linetype = c("dotted", "dashed"), color = "grey30") +
+  geom_vline(xintercept = kmo$MSA, color = "#b2182b", linewidth = 1) +
+  annotate("text", x = kmo$MSA, y = 0.5, vjust = 0, hjust = -0.05, size = 3.3,
+           color = "#b2182b", label = paste0("KMO global = ", dec(kmo$MSA))) +
+  scale_fill_manual(values = c(`TRUE` = "#2166ac", `FALSE` = "grey70"), guide = "none") +
+  scale_x_continuous(limits = c(0, 1.05), expand = c(0, 0)) +
+  labs(title = "KMO de cada variable",
+       subtitle = "Línea punteada = 0,5 (mínimo) · discontinua = 0,6 (mediocre)",
+       x = "KMO individual (MSA)", y = NULL)
+
+peor_msa <- names(which.min(kmo$MSAi))
+```
+
+**Qué vemos.** El KMO global es **`r dec(kmo$MSA)`**, nivel
+*`r nivel(kmo$MSA)`* en la escala de Kaiser (por debajo de 0,5 no tendría
+sentido seguir). El KMO compara las correlaciones entre columnas con las que
+quedan cuando se descuenta el efecto de todas las demás: si es alto, lo que
+comparten lo comparte el grupo, no solo parejas sueltas. La variable con KMO
+individual más bajo es **`r etiquetas[peor_msa]`**
+(`r dec(kmo$MSAi[peor_msa])`, nivel *`r nivel(kmo$MSAi[peor_msa])`*), la
+primera candidata a no pertenecer al grupo.
+
+**Qué significa para el GM.** `r if (kmo$MSA >= 0.6) "Sus columnas de juego interior sí comparten algo suficiente para buscar una habilidad detrás." else "Lo que comparten sus columnas es poco; cualquier habilidad que salga se debe leer con cautela."`
+**Qué decide:** seguimos con el análisis factorial, vigilando a
+`r etiquetas[peor_msa]`.
+
+# 2. Una sola habilidad: parte común y parte propia
+
+```{r fa1}
+fa1 <- fa(X, nfactors = 1, fm = "ml")
+
+# El signo del factor es arbitrario: se fija para que el rebote ofensivo cargue
+# positivo -> factor alto = más juego interior.
+signo1 <- sign(fa1$loadings["porc_rebotes_of_disp", 1])
+L1 <- signo1 * fa1$loadings[, 1]
+
+partes1 <- tibble(var = vars, Variable = etiquetas[vars],
+                  carga = L1[vars],
+                  comun = fa1$communality[vars],
+                  propia = fa1$uniquenesses[vars])
+
+partes1 %>%
+  arrange(desc(comun)) %>%
+  transmute(Variable, Carga = dec(carga),
+            `Parte común (h²)` = dec(comun), `Parte propia (u²)` = dec(propia)) %>%
+  kable(caption = "Un factor (máxima verosimilitud): carga, parte común y parte propia")
+```
+
+```{r fa1-grafica, fig.height=5}
+orden_v <- partes1$Variable[order(partes1$comun)]
+partes1 <- partes1 %>% mutate(Variable = factor(Variable, levels = orden_v))
+
+partes1 %>%
+  select(Variable, comun, propia) %>%
+  pivot_longer(c(comun, propia), names_to = "parte", values_to = "valor") %>%
+  mutate(parte = factor(parte, levels = c("propia", "comun"),
+                        labels = c("Parte propia", "Parte común (habilidad de pintura)"))) %>%
+  ggplot(aes(valor, Variable, fill = parte)) +
+  geom_col(width = 0.7) +
+  geom_text(data = partes1, inherit.aes = FALSE,
+            aes(x = 0.02, y = Variable, label = pct(comun)),
+            hjust = 0, color = "white", size = 3.4, fontface = "bold") +
+  geom_text(data = partes1, inherit.aes = FALSE,
+            aes(x = 0.98, y = Variable, label = pct(propia)),
+            hjust = 1, color = "grey25", size = 3.4) +
+  geom_vline(xintercept = 0.5, linetype = "dashed", color = "grey40") +
+  scale_x_continuous(labels = function(x) pct(x), expand = c(0, 0)) +
+  scale_fill_manual(values = c("Parte propia" = "grey82",
+                               "Parte común (habilidad de pintura)" = "#2166ac"),
+                    name = NULL) +
+  labs(title = "Qué parte de cada columna explica una sola habilidad",
+       subtitle = "Cada barra suma 100: azul = parte común (h²), gris = parte propia (u²)",
+       x = "De cada 100 partes de la variación de la columna", y = NULL) +
+  theme(legend.position = "bottom")
+```
+
+```{r fa1-resumen}
+var_comun   <- partes1$var[which.max(partes1$comun)]
+var_propia  <- partes1$var[which.max(partes1$propia)]
+mayoria_com <- as.character(partes1$Variable[partes1$comun >= 0.5])
+var_neg     <- as.character(partes1$Variable[partes1$carga < 0])
+info_f1     <- mean(partes1$comun)
+```
+
+**Qué vemos.** La habilidad común explica, en promedio,
+`r pct(info_f1)` de cada 100 partes de la variación de las
+`r length(vars)` columnas. La que más se parece a la habilidad es
+**`r etiquetas[var_comun]`** (`r pct(fa1$communality[var_comun])` de cada
+100 es parte común): es la mejor "ventana" a la habilidad.
+`r if (length(mayoria_com) > 0) paste0("Tienen más de la mitad común: ", paste(mayoria_com, collapse = ", "), ".") else "Ninguna columna tiene más de la mitad de su variación en común."`
+`r if (length(var_neg) > 0) paste0("Con carga negativa queda ", paste(var_neg, collapse = ", "), ": la habilidad la empuja hacia abajo, como se esperaba.") else ""`
+
+**Qué significa para el GM.** Las columnas con barra azul larga son, en buena
+parte, la misma información contada varias veces: si ya vio una, las demás le
+agregan poco. Las de barra gris larga sí le cuentan algo nuevo.
+
+# 3. La columna que va por su cuenta
+
+```{r significado-propia}
+que_significa <- c(
+  porc_robos_equipo = paste(
+    "Robar balones no depende de dominar la pintura: hay ladrones de balón en todas",
+    "las posiciones, y que un pívot tapone no dice nada de si corta líneas de pase.",
+    "Para el GM, un índice de juego interior no le informa quién defiende el perímetro;",
+    "si a su plantilla le faltan robos, tiene que buscarlos en esa columna, aparte."),
+  porc_tiro_verdadero = paste(
+    "La eficiencia no viene de jugar cerca del aro: hay pívots eficientes por la",
+    "distancia del tiro y tiradores eficientes desde fuera. Para el GM, saber qué tan",
+    "interior es un jugador no le dice si convierte; la eficiencia se revisa siempre",
+    "por separado antes de pagar un contrato."),
+  razon_libres_intentos = paste(
+    "Provocar faltas no es exclusivo del interior: los exteriores que penetran también",
+    "van mucho a la línea. Para el GM, la habilidad de pintura no identifica a los que",
+    "atacan el aro desde fuera; esa columna se mira aparte."),
+  porc_intentos_triple = paste(
+    "El volumen de triples no es solo 'lo contrario del interior': en la era reciente",
+    "hay pívots que abren la cancha. Para el GM, la habilidad de pintura no le dice",
+    "quién le da espaciado; el rango de tiro se evalúa aparte."),
+  porc_rebotes_def_disp = paste(
+    "El rebote defensivo tiene una parte que no es pintura: aleros que cierran el",
+    "rebote largo. Para el GM, la habilidad no reemplaza a esa columna."),
+  porc_rebotes_of_disp = paste(
+    "El rebote ofensivo tiene un componente de esfuerzo propio que la habilidad no",
+    "captura. Para el GM, esa columna se sigue mirando aparte."),
+  porc_tapones_equipo = paste(
+    "Los tapones tienen un componente propio (envergadura, timing) que la habilidad",
+    "no captura. Para el GM, la protección del aro se evalúa aparte.")
+)
+
+u_propia <- fa1$uniquenesses[var_propia]
+segunda_propia <- partes1$var[order(-partes1$propia)][2]
+
+# Puntaje de la habilidad para cada jugador (método de regresión de fa()),
+# con el mismo signo fijado arriba: alto = más juego interior.
+base$pintura <- signo1 * fa1$scores[, 1]
+r_propia_score <- cor(base$pintura, base[[var_propia]])
+```
+
+**Qué vemos.** La columna casi toda propia es **`r etiquetas[var_propia]`**:
+`r pct(u_propia)` de cada 100 partes de su variación no las comparte con la
+habilidad (su carga es apenas `r dec(L1[var_propia])`). Le sigue
+`r etiquetas[segunda_propia]`, con `r pct(fa1$uniquenesses[segunda_propia])`
+de cada 100 propias. Coincide con el KMO individual
+`r if (var_propia == peor_msa) "(era también la de KMO más bajo)" else paste0("solo en parte (la de KMO más bajo era ", etiquetas[peor_msa], ")")`,
+con la matriz de correlaciones
+`r if (var_propia == mas_sola) "(era la que iba más sola)" else paste0("solo en parte (la que iba más sola era ", etiquetas[mas_sola], ")")`
+y con el taller 2, donde las flechas de robos y eficiencia eran las más cortas.
+
+## Cómo se ve en los jugadores
+
+```{r propia-scatter, fig.height=6}
+ggplot(base, aes(pintura, .data[[var_propia]], color = posicion)) +
+  geom_point(alpha = 0.35, size = 1) +
+  geom_smooth(aes(group = 1), method = "lm", se = FALSE, color = "black", linewidth = 1) +
+  scale_color_manual(values = col_pos, labels = nombres_pos, name = "Posición") +
+  guides(color = guide_legend(override.aes = list(alpha = 1, size = 3))) +
+  labs(title = paste0("Habilidad de pintura vs. ", etiquetas[var_propia]),
+       subtitle = paste0("r = ", dec(r_propia_score),
+                         " · cada punto es un jugador-temporada 2015-2022"),
+       x = "Puntaje de la habilidad de pintura (alto = más interior)",
+       y = etiquetas[var_propia]) +
+  theme(legend.position = "bottom")
+```
+
+```{r propia-jugadores}
+b22 <- base %>% filter(temporada == 2022)
+q_alto_propia <- quantile(b22[[var_propia]], 0.85)
+
+b22 %>%
+  filter(.data[[var_propia]] >= q_alto_propia) %>%
+  arrange(pintura) %>%
+  slice_head(n = 4) %>%
+  bind_rows(b22 %>% filter(.data[[var_propia]] >= q_alto_propia) %>% arrange(desc(pintura)) %>% slice_head(n = 4)) %>%
+  transmute(Jugador = jugador, `Posición` = posicion,
+            `Puntaje pintura` = dec(pintura),
+            !!unname(etiquetas[var_propia]) := dec(.data[[var_propia]]),
+            VORP = dec(valor_sobre_reemplazo, 1)) %>%
+  kable(caption = paste0("Mercado 2022: jugadores en el 15 % más alto de ",
+                         etiquetas[var_propia],
+                         " con el puntaje de pintura más bajo (4 primeras filas) y más alto (4 últimas)"))
+```
+
+**Qué vemos.** La correlación entre el puntaje de la habilidad y
+`r etiquetas[var_propia]` es apenas `r dec(r_propia_score)`: la nube no tiene
+pendiente clara y todas las posiciones aparecen a cualquier altura. En el
+mercado 2022 hay jugadores en lo más alto de esta columna con perfiles de
+pintura opuestos (tabla): la habilidad no los distingue.
+
+## ¿Mejora el índice si la sacamos?
+
+```{r sin-propia}
+X_sin <- X[, setdiff(vars, var_propia)]
+R_sin <- cor(X_sin)
+fa1_sin <- fa(X_sin, nfactors = 1, fm = "ml")
+kmo_sin <- KMO(X_sin)
+
+res1_tot <- resid_mat(fa1, R)
+res1_sin <- resid_mat(fa1_sin, R_sin)
+
+tibble(Modelo = c("Las 7 columnas", paste("Sin", etiquetas[var_propia])),
+       `KMO global` = dec(c(kmo$MSA, kmo_sin$MSA)),
+       `Parte común promedio (de cada 100)` = pct(c(mean(fa1$communality), mean(fa1_sin$communality))),
+       RMSR = dec(c(rmsr(res1_tot), rmsr(res1_sin)), 3),
+       `Pares con |residuo| > 0,10` = c(sum(abs(res1_tot[upper.tri(res1_tot)]) > 0.1),
+                                        sum(abs(res1_sin[upper.tri(res1_sin)]) > 0.1))) %>%
+  kable(caption = "Un factor con y sin la columna casi toda propia")
+```
+
+Sacar `r etiquetas[var_propia]` cambia el KMO de `r dec(kmo$MSA)` a
+`r dec(kmo_sin$MSA)` y la parte común promedio de `r pct(mean(fa1$communality))`
+a `r pct(mean(fa1_sin$communality))` de cada 100. Es lógico que la parte común
+promedio suba: se quita la columna que menos comparte. Lo que importa es que
+las cargas de las demás casi no cambian, así que esa columna no estaba
+definiendo la habilidad, solo acompañándola.
+
+**Qué significa para el GM.** `r que_significa[var_propia]`
+
+**Qué decide.** Una columna con parte propia tan grande no se puede sustituir
+por el puntaje de la habilidad. Para el índice de pintura la sacamos; para el
+tablero la conservamos como columna independiente, porque no es ruido: es
+información que ninguna otra columna trae.
+
+# 4. ¿Una habilidad alcanza?
+
+Si una sola habilidad explicara todo lo que las columnas comparten, la
+correlación entre dos columnas debería ser igual al **producto de sus
+cargas**: r(A, B) ≈ carga(A) × carga(B). Lo que sobra (el *residuo*) es lo que
+esas dos columnas comparten **además** de la habilidad.
+
+```{r residuos1}
+Rrep1 <- outer(L1, L1)            # correlación que predice un factor
+idx   <- which(upper.tri(R), arr.ind = TRUE)
+
+pares1 <- tibble(a = vars[idx[, 1]], b = vars[idx[, 2]],
+                 r_real = R[idx], r_pred = Rrep1[idx]) %>%
+  mutate(residuo = r_real - r_pred,
+         par = paste(corta[a], "–", corta[b]),
+         mal = abs(residuo) > 0.10)
+
+rmsr1     <- sqrt(mean(pares1$residuo^2))
+n_res10_1 <- sum(pares1$mal)
+n_res05_1 <- sum(abs(pares1$residuo) > 0.05)
+peor1     <- pares1 %>% slice_max(abs(residuo), n = 1)
+```
+
+## Vista general: todos los pares a la vez
+
+```{r residuos1-scatter, fig.width=7, fig.height=6.5}
+lim <- range(c(pares1$r_real, pares1$r_pred)) + c(-0.05, 0.05)
+
+ggplot(pares1, aes(r_pred, r_real)) +
+  geom_ribbon(data = tibble(x = lim), inherit.aes = FALSE,
+              aes(x = x, ymin = x - 0.1, ymax = x + 0.1), fill = "grey92") +
+  geom_abline(slope = 1, intercept = 0, color = "grey30") +
+  geom_point(aes(fill = mal), shape = 21, size = 3.5, color = "white", stroke = 0.6) +
+  scale_fill_manual(values = c(`TRUE` = "#b2182b", `FALSE` = "#2166ac"),
+                    labels = c(`TRUE` = "|residuo| > 0,10", `FALSE` = "|residuo| ≤ 0,10"),
+                    name = NULL) +
+  coord_equal(xlim = lim, ylim = lim) +
+  labs(title = "Correlación real vs. producto de las cargas",
+       subtitle = "Franja gris = ±0,10 alrededor de la diagonal.\nLos nombres de cada par están en el gráfico siguiente.",
+       x = "Producto de las cargas (lo que predice una habilidad)",
+       y = "Correlación real") +
+  theme(legend.position = "bottom")
+```
+
+## Par por par
+
+Para que cada par se lea sin tapar a los demás, se muestra cada uno en su
+propia fila: el punto gris es lo que predice una habilidad, el punto de color
+es la correlación real, y la línea entre ambos es el residuo.
+
+```{r residuos1-pares, fig.width=9, fig.height=7.5}
+pares1 %>%
+  mutate(par = fct_reorder(par, residuo)) %>%
+  ggplot(aes(y = par)) +
+  geom_segment(aes(x = r_pred, xend = r_real, yend = par, color = mal), linewidth = 1.2) +
+  geom_point(aes(x = r_pred), color = "grey55", size = 3) +
+  geom_point(aes(x = r_real, color = mal), size = 3.2) +
+  geom_text(aes(x = pmax(r_real, r_pred) + 0.04,
+                label = paste0(ifelse(residuo > 0, "+", ""), dec(residuo))),
+            hjust = 0, size = 3.2, color = "grey25") +
+  geom_vline(xintercept = 0, color = "grey70") +
+  scale_color_manual(values = c(`TRUE` = "#b2182b", `FALSE` = "#2166ac"),
+                     labels = c(`TRUE` = "|residuo| > 0,10", `FALSE` = "|residuo| ≤ 0,10"),
+                     name = "Correlación real") +
+  scale_x_continuous(expand = expansion(mult = c(0.05, 0.15))) +
+  labs(title = "Cada par: lo que predice una habilidad (gris) y lo que pasa de verdad (color)",
+       subtitle = "Ordenado por residuo · el número es correlación real − producto de cargas",
+       x = "Correlación", y = NULL) +
+  theme(legend.position = "bottom", panel.grid.major.y = element_blank())
+```
+
+## El mapa de lo que sobra
+
+```{r residuos1-mapa, fig.width=7.5, fig.height=6}
+M1 <- R - Rrep1
+dimnames(M1) <- list(corta[vars], corta[vars])
+M1 <- M1[orden, orden]
+M1[upper.tri(M1, diag = TRUE)] <- NA
+
+as.data.frame(as.table(M1)) %>%
+  setNames(c("v1", "v2", "res")) %>%
+  filter(!is.na(res)) %>%
+  ggplot(aes(v1, v2, fill = res)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = dec(res), fontface = ifelse(abs(res) > 0.1, "bold", "plain")), size = 3.6) +
+  scale_fill_gradient2(low = "#b2182b", mid = "white", high = "#2166ac",
+                       limits = c(-0.4, 0.4), oob = scales::squish, name = "Residuo") +
+  coord_equal() +
+  labs(title = "Residuos con un factor (correlación real − producto de cargas)",
+       subtitle = "Blanco = la habilidad lo explica · color fuerte = queda algo por explicar",
+       x = NULL, y = NULL) +
+  theme(axis.text.x = element_text(angle = 35, hjust = 1), panel.grid = element_blank())
+```
+
+```{r residuos1-tabla}
+pares1 %>%
+  slice_max(abs(residuo), n = 6) %>%
+  transmute(Par = paste(etiquetas[a], "–", etiquetas[b]), `r real` = dec(r_real),
+            `Producto de cargas` = dec(r_pred), Residuo = dec(residuo)) %>%
+  kable(caption = "Los seis pares que una sola habilidad explica peor")
+```
+
+**Qué vemos.** De los `r nrow(pares1)` pares de columnas,
+**`r n_res10_1`** tienen un residuo mayor que 0,10 en valor absoluto y
+`r n_res05_1` mayor que 0,05; el residuo promedio (RMSR) es
+`r dec(rmsr1, 3)` (por debajo de 0,05 se suele considerar buen ajuste;
+por encima de 0,08, malo). El par peor explicado es
+**`r etiquetas[peor1$a]` – `r etiquetas[peor1$b]`**: la correlación real es
+`r dec(peor1$r_real)` y el producto de cargas predice `r dec(peor1$r_pred)`,
+así que esas dos columnas
+`r if (peor1$residuo > 0) "comparten algo más que la habilidad de pintura" else "se parecen menos de lo que la habilidad haría pensar"`.
+Los residuos no están repartidos al azar: si en el mapa se agrupan alrededor de
+las mismas columnas, es señal de una segunda habilidad. (No usamos la prueba
+chi-cuadrado de `fa()`: con `r num(n)` casos rechaza casi cualquier modelo
+aunque los residuos sean pequeños.)
+
+**Qué significa para el GM.**
+`r if (n_res10_1 == 0) "Una sola habilidad reproduce bien cómo se relacionan sus columnas: puede leer el bloque interior con un único puntaje." else if (n_res10_1 <= 2) paste0("Una habilidad explica casi todo, pero queda una relación que no captura (", etiquetas[peor1$a], " – ", etiquetas[peor1$b], "). Puede usar un único puntaje como primera criba, sabiendo que ese par cuenta algo más.") else "Una sola habilidad no alcanza: varias parejas de columnas comparten algo que el puntaje único no ve. Si resume el bloque con un número, perderá esa información."`
+**Qué decide:** `r if (n_res10_1 <= 2) "aceptar un factor como resumen provisional y probar si un segundo agrega algo con sentido." else "probar con dos habilidades antes de construir un índice."`
+
+# 5. Con dos habilidades
+
+## ¿Cuántas habilidades sugiere la base?
+
+El análisis paralelo compara la fuerza de cada factor en los datos reales con
+la que tendría en datos al azar del mismo tamaño. Solo vale la pena quedarse
+con los factores que superan al azar.
+
+```{r paralelo, fig.height=4.5}
+set.seed(2026)
+pa <- fa.parallel(X, fm = "ml", fa = "fa", n.iter = 50, plot = FALSE)
+
+tibble(factor = seq_along(pa$fa.values),
+       Real = pa$fa.values, Azar = pa$fa.sim) %>%
+  pivot_longer(-factor, names_to = "tipo", values_to = "valor") %>%
+  ggplot(aes(factor, valor, color = tipo, linetype = tipo)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2.5) +
+  scale_color_manual(values = c(Real = "#2166ac", Azar = "grey50"), name = NULL) +
+  scale_linetype_manual(values = c(Real = "solid", Azar = "dashed"), name = NULL) +
+  scale_x_continuous(breaks = seq_along(pa$fa.values)) +
+  labs(title = "Análisis paralelo",
+       subtitle = paste0("Factores que superan al azar: ", pa$nfact),
+       x = "Factor", y = "Valor propio (factores)") +
+  theme(legend.position = "bottom")
+```
+
+Según el análisis paralelo, la base sostiene **`r pa$nfact`** factor`r ifelse(pa$nfact == 1, "", "es")`.
+Con muchos casos esta prueba tiende a admitir factores pequeños, así que es un
+techo, no una orden: el segundo factor hay que juzgarlo por lo que contiene.
+
+## El modelo de dos factores
+
+```{r fa2}
+fa2 <- fa(X, nfactors = 2, fm = "ml", rotate = "oblimin")
+
+L2  <- unclass(fa2$loadings)[, 1:2]
+Phi <- fa2$Phi
+# Signos: cada factor se orienta para que su carga más grande sea positiva
+for (j in 1:2) {
+  if (L2[which.max(abs(L2[, j])), j] < 0) {
+    L2[, j] <- -L2[, j]; Phi[j, -j] <- -Phi[j, -j]; Phi[-j, j] <- -Phi[-j, j]
+  }
+}
+# Se llama F1 al factor en que más carga el rebote ofensivo (la habilidad de pintura)
+if (abs(L2["porc_rebotes_of_disp", 2]) > abs(L2["porc_rebotes_of_disp", 1])) {
+  L2 <- L2[, 2:1]; Phi <- Phi[2:1, 2:1]
+}
+colnames(L2) <- c("F1", "F2")
+
+tab2 <- tibble(var = vars, Variable = etiquetas[vars],
+               F1 = L2[vars, 1], F2 = L2[vars, 2],
+               comun1 = fa1$communality[vars],
+               comun2 = fa2$communality[vars],
+               propia2 = fa2$uniquenesses[vars])
+
+tab2 %>%
+  arrange(desc(abs(F1))) %>%
+  transmute(Variable, `Carga F1` = dec(F1), `Carga F2` = dec(F2),
+            `Común con 1 factor` = dec(comun1), `Común con 2 factores` = dec(comun2)) %>%
+  kable(caption = paste0("Dos factores (ML, rotación oblimin). Correlación entre F1 y F2 = ",
+                         dec(Phi[1, 2])))
+```
+
+Usamos una rotación **oblicua** (oblimin) porque no hay razón para suponer que
+dos habilidades de juego sean independientes: la rotación deja que se
+correlacionen y nos dice cuánto (`r dec(Phi[1, 2])`).
+
+```{r fa2-grafica, fig.height=5}
+tab2 %>%
+  select(Variable, F1, F2) %>%
+  pivot_longer(c(F1, F2), names_to = "factor", values_to = "carga") %>%
+  mutate(manda = abs(carga) >= 0.4,
+         Variable = factor(Variable, levels = tab2$Variable[order(tab2$F1)])) %>%
+  ggplot(aes(carga, Variable, fill = manda)) +
+  geom_col() +
+  geom_vline(xintercept = 0, color = "grey30") +
+  facet_wrap(~ factor) +
+  scale_fill_manual(values = c(`TRUE` = "#2166ac", `FALSE` = "grey75"),
+                    labels = c(`TRUE` = "|carga| ≥ 0,4", `FALSE` = "|carga| < 0,4"),
+                    name = NULL) +
+  labs(title = "Cargas con dos factores",
+       subtitle = "En azul, las columnas que definen cada factor",
+       x = "Carga", y = NULL) +
+  theme(legend.position = "bottom")
+```
+
+```{r comunalidad-1vs2, fig.height=4.8}
+tab2 %>%
+  mutate(Variable = fct_reorder(Variable, comun2 - comun1)) %>%
+  ggplot(aes(y = Variable)) +
+  geom_segment(aes(x = comun1, xend = comun2, yend = Variable),
+               color = "grey60", linewidth = 1.2,
+               arrow = arrow(length = unit(0.18, "cm"), type = "closed")) +
+  geom_point(aes(x = comun1), color = "grey55", size = 3) +
+  geom_point(aes(x = comun2), color = "#2166ac", size = 3.2) +
+  scale_x_continuous(labels = function(x) pct(x), limits = c(0, 1)) +
+  labs(title = "Parte común de cada columna: con 1 factor (gris) y con 2 (azul)",
+       subtitle = "La flecha larga indica la columna que el segundo factor explica mejor",
+       x = "Parte común (de cada 100)", y = NULL) +
+  theme(panel.grid.major.y = element_blank())
+```
+
+```{r residuos2, fig.width=10, fig.height=5.2}
+res2_m <- resid_mat(fa2, R)
+pares2 <- pares1 %>% mutate(residuo2 = res2_m[idx])
+
+rmsr2     <- sqrt(mean(pares2$residuo2^2))
+n_res10_2 <- sum(abs(pares2$residuo2) > 0.10)
+
+# Mapa de residuos lado a lado: un factor vs dos factores
+mapa_res <- function(M, titulo) {
+  dimnames(M) <- list(corta[vars], corta[vars])
+  M <- M[orden, orden]; M[upper.tri(M, diag = TRUE)] <- NA
+  as.data.frame(as.table(M)) %>% setNames(c("v1", "v2", "res")) %>%
+    filter(!is.na(res)) %>%
+    ggplot(aes(v1, v2, fill = res)) +
+    geom_tile(color = "white") +
+    geom_text(aes(label = dec(res)), size = 3.1) +
+    scale_fill_gradient2(low = "#b2182b", mid = "white", high = "#2166ac",
+                         limits = c(-0.4, 0.4), oob = scales::squish, name = "Residuo") +
+    coord_equal() + labs(title = titulo, x = NULL, y = NULL) +
+    theme(axis.text.x = element_text(angle = 35, hjust = 1), panel.grid = element_blank())
+}
+(mapa_res(R - Rrep1, "Residuos con 1 factor") |
+  mapa_res(res2_m, "Residuos con 2 factores")) +
+  plot_layout(guides = "collect")
+```
+
+```{r ajuste}
+fa3 <- tryCatch(fa(X, nfactors = 3, fm = "ml", rotate = "oblimin"), error = function(e) NULL)
+modelos <- list(`1 factor` = fa1, `2 factores` = fa2)
+if (!is.null(fa3)) modelos$`3 factores` = fa3
+
+map_dfr(names(modelos), function(m) {
+  f <- modelos[[m]]
+  M <- resid_mat(f, R)
+  tibble(Modelo = m,
+         RMSR = dec(rmsr(M), 3),
+         `Pares con |residuo| > 0,10` = sum(abs(M[upper.tri(M)]) > 0.1),
+         `Parte común promedio (de cada 100)` = pct(mean(f$communality)),
+         TLI = dec(f$TLI),
+         RMSEA = dec(f$RMSEA[1], 3),
+         BIC = num(round(f$BIC)))
+}) %>%
+  kable(caption = "Ajuste con 1, 2 y 3 factores (TLI alto y RMSEA, RMSR y BIC bajos = mejor)")
+```
+
+```{r fa2-resumen}
+# Qué columnas definen F2: carga |≥ 0,4| en F2 y mayor que su carga en F1
+define_f2 <- tab2 %>% filter(abs(F2) >= 0.4, abs(F2) > abs(F1))
+n_f2      <- nrow(define_f2)
+heywood   <- tab2$Variable[tab2$propia2 < 0.02]
+mas_gana  <- tab2 %>% mutate(gana = comun2 - comun1) %>% slice_max(gana, n = 1)
+f2_tiene_propia <- var_propia %in% define_f2$var
+habilidad2 <- n_f2 >= 2 && length(heywood) == 0
+```
+
+**Qué vemos.** Con dos factores el residuo promedio pasa de
+`r dec(rmsr1, 3)` a `r dec(rmsr2, 3)` y los pares mal explicados
+(|residuo| > 0,10) de `r n_res10_1` a `r n_res10_2`. La columna que más gana
+es **`r mas_gana$Variable`**: su parte común sube de
+`r pct(mas_gana$comun1)` a `r pct(mas_gana$comun2)` de cada 100.
+`r if (n_f2 == 0) "Ninguna columna carga principalmente en F2 con fuerza (|carga| ≥ 0,4)." else paste0("F2 lo define", ifelse(n_f2 > 1, "n ", " "), n_f2, " columna", ifelse(n_f2 > 1, "s", ""), ": ", paste0(define_f2$Variable, " (", dec(define_f2$F2), ")", collapse = ", "), ".")`
+La correlación entre los dos factores es `r dec(Phi[1, 2])`.
+`r if (f2_tiene_propia) paste0("La columna que en el punto 3 era casi toda propia (", etiquetas[var_propia], ") es justamente la que se lleva el segundo factor.") else ""`
+`r if (length(heywood) > 0) paste0("Ojo: ", paste(heywood, collapse = ", "), " queda con parte propia prácticamente nula (caso Heywood): el segundo factor se dedica a copiar esa columna, no a describir algo compartido.") else ""`
+
+**¿La segunda es una habilidad con sentido, o es una sola variable?**
+`r if (n_f2 == 0) {
+  "**No es una habilidad.** El segundo factor no tiene columnas propias: solo reparte un poco de lo que ya explicaba el primero."
+} else if (n_f2 == 1 || length(heywood) > 0) {
+  paste0("**Es una sola variable.** F2 es básicamente ", define_f2$Variable[1], " con otro nombre: no agrupa columnas, solo le da un factor propio a una que ya iba por su cuenta. Un factor que se apoya en una sola columna no describe una habilidad compartida, y mejora el ajuste solo porque deja de tratar como residuo lo que esa columna tiene de propio.")
+} else {
+  paste0("**Sí parece una habilidad.** F2 agrupa ", n_f2, " columnas (", paste(define_f2$Variable, collapse = ", "), ") que se mueven juntas sin depender del todo de la pintura, y con eso el ajuste mejora. Para tener sentido, ese grupo debe poder nombrarse en términos de juego; si no, es un artefacto del ajuste.")
+}`
+
+**Qué significa para el GM.**
+`r if (habilidad2) "Detrás de sus columnas de interior hay dos habilidades distintas. Un único puntaje de pintura mezclaría dos cosas que se pueden tener por separado; le conviene leer dos puntajes." else "Detrás de sus columnas de interior hay una sola habilidad real, la de pintura. El segundo factor no le da un nuevo concepto de jugador: le devuelve una columna que ya tenía."`
+**Qué decide.**
+`r if (habilidad2) "Construir dos índices (uno por factor) y usarlos juntos para describir a los interiores del mercado 2022." else paste0("Usar un solo índice de juego interior y reportar ", etiquetas[var_propia], " como columna independiente, porque ningún factor la resume.")`
+
+# 6. El índice de pintura en el mercado 2022
+
+El puntaje del factor le da al GM un número por jugador. Antes de usarlo hay
+que ver qué ordena y qué no.
+
+```{r indice-posicion, fig.height=4.8}
+ggplot(base, aes(posicion, pintura, fill = posicion)) +
+  geom_boxplot(outlier.alpha = 0.3, color = "grey25") +
+  scale_fill_manual(values = col_pos, guide = "none") +
+  scale_x_discrete(labels = nombres_pos) +
+  labs(title = "Puntaje de la habilidad de pintura, por posición",
+       subtitle = "2015-2022 · alto = más juego interior",
+       x = NULL, y = "Puntaje de pintura")
+```
+
+```{r indice-validez}
+pc1 <- prcomp(X, scale. = TRUE)$x[, 1]
+r_pc1  <- abs(cor(pc1, base$pintura))
+r_vorp <- cor(base$pintura, base$valor_sobre_reemplazo)
+medias_pos <- base %>% group_by(posicion) %>% summarise(m = mean(pintura), .groups = "drop")
+```
+
+```{r indice-vorp, fig.height=5.5}
+ggplot(base, aes(pintura, valor_sobre_reemplazo)) +
+  geom_point(aes(color = posicion), alpha = 0.3, size = 1) +
+  geom_smooth(method = "loess", se = FALSE, color = "black", linewidth = 1) +
+  scale_color_manual(values = col_pos, labels = nombres_pos, name = "Posición") +
+  guides(color = guide_legend(override.aes = list(alpha = 1, size = 3))) +
+  labs(title = "¿Más pintura es más valor?",
+       subtitle = paste0("r = ", dec(r_vorp), " entre el puntaje de pintura y el VORP"),
+       x = "Puntaje de pintura", y = "VORP (valor sobre reemplazo)") +
+  theme(legend.position = "bottom")
+```
+
+```{r indice-top}
+b22 <- base %>% filter(temporada == 2022)
+
+b22 %>%
+  arrange(desc(pintura)) %>%
+  slice_head(n = 10) %>%
+  transmute(Jugador = jugador, `Posición` = posicion,
+            `Puntaje pintura` = dec(pintura),
+            `Reb. of.` = dec(porc_rebotes_of_disp, 1),
+            Tapones = dec(porc_tapones_equipo, 1),
+            !!unname(etiquetas[var_propia]) := dec(.data[[var_propia]]),
+            VORP = dec(valor_sobre_reemplazo, 1)) %>%
+  kable(caption = "Mercado 2022: los 10 jugadores con mayor habilidad de pintura")
+```
+
+**Qué vemos.** El puntaje ordena a las posiciones de exterior a interior
+(promedio de base `r dec(medias_pos$m[medias_pos$posicion == "PG"])`, de pívot
+`r dec(medias_pos$m[medias_pos$posicion == "C"])`), y se parece mucho a la
+primera componente del PCA con estas mismas columnas (|r| = `r dec(r_pc1)`):
+el factor y la componente encuentran el mismo eje, aunque el factor lo limpia
+de la parte propia de cada columna. Con el VORP, en cambio, la relación es
+`r ifelse(abs(r_vorp) < 0.3, "débil", "moderada")` (r = `r dec(r_vorp)`): hay
+interiores de mucho valor y de poco valor.
+
+**Qué significa para el GM.** El índice de pintura le dice **qué tipo de
+jugador** es cada candidato, no **qué tan bueno** es, igual que la C1 del
+taller 1. **Qué decide:** si su plantilla necesita un interior, usa el puntaje
+para armar la lista corta (tabla anterior) y decide entre los finalistas con
+VORP, eficiencia y contrato; la columna `r etiquetas[var_propia]` la revisa
+aparte.
+
+# Lo que se lleva el GM
+
+- **Hay una habilidad de pintura real.** Rebotes, tapones y ataque al aro
+  comparten una causa común; el KMO (`r dec(kmo$MSA)`, *`r nivel(kmo$MSA)`*)
+  dice que tenía sentido buscarla.
+- **No todo lo que parece interior lo es.** `r etiquetas[var_propia]` es casi
+  toda parte propia (`r pct(u_propia)` de cada 100): la habilidad no la explica
+  y el GM la debe seguir mirando aparte.
+- **Una habilidad `r if (n_res10_1 <= 2) "alcanza casi del todo" else "no alcanza"`** para reproducir las correlaciones
+  (`r n_res10_1` de `r nrow(pares1)` pares con residuo mayor que 0,10; RMSR = `r dec(rmsr1, 3)`).
+- **El segundo factor `r if (habilidad2) "es una habilidad con sentido" else "no agrega una habilidad nueva"`**, así que
+  `r if (habilidad2) "el resumen correcto son dos puntajes" else "el resumen correcto es un puntaje de pintura más las columnas que van por su cuenta"`.
+- **El puntaje de pintura clasifica, no valora.** Sirve para saber qué pieza
+  le falta a la plantilla; para decidir a quién pagar sigue necesitando VORP.
+- **Como en los talleres anteriores**, estos factores describen qué columnas
+  se mueven juntas en esta base; no demuestran que una habilidad *cause* el
+  rendimiento.
