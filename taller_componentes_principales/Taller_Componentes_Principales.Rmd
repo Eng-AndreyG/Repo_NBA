@@ -1,7 +1,10 @@
 ---
-title: "Talleres de Componentes Principales · NBA"
-subtitle: "Estadística Multidimensional · 26158 · grupo 020-81"
-author: "Equipo NBA"
+title: "Taller de Componentes Principales · NBA"
+subtitle: "Estadística Multidimensional - 26158 · grupo 020-81"
+author:
+  - "Andrey Camilo Gonzalez Caceres · 20231020070"
+  - "Julian David Pulido Carreño · 20231020064"
+  - "David Martínez Rincón · 20222020167"
 date: "`r paste(as.integer(format(Sys.Date(), '%d')), 'de', c('enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre')[as.integer(format(Sys.Date(), '%m'))], 'de', format(Sys.Date(), '%Y'))`"
 output:
   html_document:
