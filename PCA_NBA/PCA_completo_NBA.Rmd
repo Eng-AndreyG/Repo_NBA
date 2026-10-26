@@ -1,0 +1,1242 @@
+---
+title: "Componentes Principales sobre todo el dataset · NBA"
+subtitle: "Estadística Multidimensional - 26158 · grupo 020-81"
+author:
+  - "Andrey Camilo Gonzalez Caceres · 20231020070"
+  - "Julian David Pulido Carreño · 20231020064"
+  - "David Martínez Rincón · 20222020167"
+date: "`r paste(as.integer(format(Sys.Date(), '%d')), 'de', c('enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre')[as.integer(format(Sys.Date(), '%m'))], 'de', format(Sys.Date(), '%Y'))`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    number_sections: false
+    theme: flatly
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 9, fig.height = 5.5, fig.align = "center")
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggrepel)
+library(knitr)
+
+theme_set(theme_minimal(base_size = 12))
+
+pct <- function(x, d = 1) format(round(100 * x, d), nsmall = d, decimal.mark = ",")
+dec <- function(x, d = 2) format(round(x, d), nsmall = d, decimal.mark = ",")
+num <- function(x) format(x, big.mark = ".", decimal.mark = ",")
+
+col_pos <- c(PG = "#1b9e77", SG = "#7570b3", SF = "#e6ab02", PF = "#d95f02", C = "#e7298a")
+nombres_pos <- c(PG = "Base (PG)", SG = "Escolta (SG)", SF = "Alero (SF)",
+                 PF = "Ala-pívot (PF)", C = "Pívot (C)")
+```
+
+En los talleres anteriores el Análisis de Componentes Principales (PCA) se aplicó sobre **10
+variables seleccionadas a criterio** para describir el perfil de juego. En este documento el
+análisis se extiende al **dataset completo**: las **55 columnas** de `NBA_espanol.csv` y las 41
+temporadas disponibles (1982-2022). El cambio no es solo de tamaño, también cambia la pregunta.
+Antes se trataba de resumir un conjunto pequeño elegido de antemano; ahora se trata de estimar la
+**dimensionalidad efectiva** de la base, es decir, cuántas direcciones de variación realmente
+distintas contienen esas 55 columnas, y qué se pierde al representarlas con unas pocas.
+
+# 1. Planteamiento y datos
+
+```{r datos}
+# ------------------------------------------------------------------
+# Base: todo el dataset (1982-2022), jugadores con rol real
+# ------------------------------------------------------------------
+# Igual que en los talleres anteriores, las filas TOT se conservan: un jugador
+# traspasado aparece solo con su fila TOT, así que quitarlas borraría a los
+# traspasados. El único filtro es el de minutos.
+nba <- read.csv("NBA_espanol.csv", fileEncoding = "UTF-8")
+p_total <- ncol(nba)
+stopifnot(p_total == 55)
+
+base <- nba %>%
+  filter(minutos_totales >= 500) %>%                 # rol real: tasas estables
+  mutate(posicion = sub("-.*", "", posicion),        # "SG-PF" -> "SG"
+         posicion = factor(posicion, levels = c("PG", "SG", "SF", "PF", "C")))
+
+# porc_triple no existe cuando el jugador no intentó ningún triple (0/0).
+# Se marca y se rellena con 0: quien no tira de tres no aporta triples.
+# La sección 12 comprueba que esta decisión no cambia el resultado.
+base$sin_triple <- is.na(base$porc_triple)
+n_sin_triple <- sum(base$sin_triple)
+base$porc_triple[base$sin_triple] <- 0
+
+# Diccionario: todas las columnas numéricas menos la temporada, con su bloque
+dicc <- tribble(
+  ~var,                      ~etiqueta,                 ~bloque,
+  "edad",                    "Edad",                    "Contexto",
+  "partidos_jugados",        "Partidos jugados",        "Oportunidad",
+  "partidos_titular",        "Partidos de titular",     "Oportunidad",
+  "minutos_pp",              "Minutos/p",               "Oportunidad",
+  "minutos_totales",         "Minutos totales",         "Oportunidad",
+  "tiros_anotados_pp",       "Tiros anotados/p",        "Anotación",
+  "tiros_intentados_pp",     "Tiros intentados/p",      "Anotación",
+  "dobles_anotados_pp",      "Dobles anotados/p",       "Anotación",
+  "dobles_intentados_pp",    "Dobles intentados/p",     "Anotación",
+  "libres_anotados_pp",      "Libres anotados/p",       "Anotación",
+  "libres_intentados_pp",    "Libres intentados/p",     "Anotación",
+  "puntos_pp",               "Puntos/p",                "Anotación",
+  "triples_anotados_pp",     "Triples anotados/p",      "Triple",
+  "triples_intentados_pp",   "Triples intentados/p",    "Triple",
+  "porc_triple",             "% triple",                "Triple",
+  "porc_intentos_triple",    "% tiros de triple",       "Triple",
+  "porc_tiro_campo",         "% tiro de campo",         "Eficiencia",
+  "porc_doble",              "% doble",                 "Eficiencia",
+  "porc_tiro_efectivo",      "eFG%",                    "Eficiencia",
+  "porc_libre",              "% libre",                 "Eficiencia",
+  "porc_tiro_verdadero",     "TS%",                     "Eficiencia",
+  "razon_libres_intentos",   "Ataque al aro (FTr)",     "Eficiencia",
+  "rebotes_of_pp",           "Reb. of./p",              "Interior",
+  "rebotes_def_pp",          "Reb. def./p",             "Interior",
+  "rebotes_totales_pp",      "Reb. totales/p",          "Interior",
+  "tapones_pp",              "Tapones/p",               "Interior",
+  "faltas_pp",               "Faltas/p",                "Interior",
+  "porc_rebotes_of_disp",    "ORB%",                    "Interior",
+  "porc_rebotes_def_disp",   "DRB%",                    "Interior",
+  "porc_rebotes_tot_disp",   "TRB%",                    "Interior",
+  "porc_tapones_equipo",     "BLK%",                    "Interior",
+  "asistencias_pp",          "Asistencias/p",           "Creación",
+  "perdidas_pp",             "Pérdidas/p",              "Creación",
+  "porc_asistencias_equipo", "AST%",                    "Creación",
+  "porc_perdidas_jugada",    "TOV%",                    "Creación",
+  "porc_uso_jugador",        "USG%",                    "Creación",
+  "robos_pp",                "Robos/p",                 "Defensa",
+  "porc_robos_equipo",       "STL%",                    "Defensa",
+  "victorias_defensa",       "Win Shares def.",         "Defensa",
+  "masmenos_defensivo",      "BPM def.",                "Defensa",
+  "indice_eficiencia",       "PER",                     "Valor global",
+  "victorias_ofensiva",      "Win Shares of.",          "Valor global",
+  "victorias_total",         "Win Shares",              "Valor global",
+  "victorias_por_48min",     "WS/48",                   "Valor global",
+  "masmenos_ofensivo",       "BPM of.",                 "Valor global",
+  "masmenos_total",          "BPM",                     "Valor global",
+  "valor_sobre_reemplazo",   "VORP",                    "Valor global",
+  "porc_votos_mvp",          "Votos MVP",               "Valor global",
+  "margen_victoria",         "Margen del equipo",       "Equipo",
+  "margen_victoria_ajust",   "Margen ajustado (SRS)",   "Equipo",
+  "porc_victorias_equipo",   "% victorias del equipo",  "Equipo"
+)
+
+# Comprobación: el diccionario cubre exactamente las columnas numéricas de la base
+numericas <- setdiff(names(nba)[sapply(nba, is.numeric)], "temporada")
+stopifnot(setequal(dicc$var, numericas))
+
+vars      <- dicc$var
+etiquetas <- setNames(dicc$etiqueta, dicc$var)
+bloque    <- setNames(dicc$bloque, dicc$var)
+orden_bloques <- c("Oportunidad", "Anotación", "Triple", "Eficiencia", "Interior",
+                   "Creación", "Defensa", "Valor global", "Equipo", "Contexto")
+col_bloque <- c(Oportunidad = "#4d4d4d", `Anotación` = "#2166ac", Triple = "#67a9cf",
+                Eficiencia = "#1b9e77", Interior = "#e7298a", `Creación` = "#e6ab02",
+                Defensa = "#7570b3", `Valor global` = "#b2182b", Equipo = "#a6761d",
+                Contexto = "#999999")
+
+stopifnot(all(complete.cases(base[, vars])))
+X <- base[, vars]
+n <- nrow(base)
+p <- length(vars)
+```
+
+**Contexto del encargo.** El cliente sigue siendo el *General Manager* (GM) de una franquicia NBA.
+En los talleres anteriores se le resumió un tablero de 10 columnas de perfil de juego; ahora trae
+**la base completa**, con `r p_total` columnas por jugador y temporada. Su pregunta puede
+formularse así:
+
+> *«Mis analistas me entregan `r p_total` columnas por jugador. ¿Son realmente `r p_total` aspectos
+> distintos del juego? ¿Cuántos números necesito mirar para no perder lo importante, y qué dejo de
+> ver si miro menos?»*
+
+En términos estadísticos, la pregunta tiene tres partes: (i) cuánta **redundancia** hay entre las
+columnas, (ii) cuántas **componentes** hacen falta para recoger la mayor parte de la variabilidad,
+y (iii) qué variables quedan **mal representadas** por ese resumen.
+
+**Unidades de análisis.** Son `r num(n)` temporadas-jugador (1982-2022) con al menos 500 minutos
+jugados, el mismo filtro de los talleres anteriores. El filtro se justifica porque las tasas
+(porcentajes de tiro, de rebote, de uso) calculadas con pocos minutos tienen una varianza muestral
+muy alta: un jugador con 3 tiros en la temporada puede tener 100 % de acierto por puro azar, y esa
+variabilidad espuria inflaría las componentes. Del total de `r num(nrow(nba))` filas del archivo se
+conserva el `r pct(n / nrow(nba), 0)` %.
+
+## Las `r p_total` variables y su papel en el análisis
+
+```{r inventario}
+inventario <- tibble(
+  Papel    = c("Activas", "Suplementaria cuantitativa", "Suplementaria cualitativa", "Identificadores"),
+  Columnas = c(p, 1, 1, 2),
+  `Cuáles` = c(paste0("Las ", p, " numéricas que describen el desempeño del jugador o de su equipo"),
+               "temporada",
+               "posicion",
+               "jugador, equipo"),
+  `Uso en el análisis` = c("Construyen las componentes: entran a la matriz de correlaciones",
+                           "Se proyecta sobre las componentes ya construidas (sección 8)",
+                           "Se usa para colorear el mapa y comparar grupos (sección 8)",
+                           "Etiquetan casos concretos (secciones 10 y 11)"))
+stopifnot(sum(inventario$Columnas) == p_total)
+kable(inventario, caption = paste0("Las ", p_total, " columnas de NBA_espanol.csv, clasificadas según su papel"))
+```
+
+El PCA opera sobre la matriz de correlaciones, así que **solo admite variables cuantitativas**, y
+además conviene distinguir entre lo que describe al jugador y lo que describe el contexto. Por eso
+no todas las `r p_total` columnas cumplen la misma función:
+
+- **`r p` variables activas.** Son todas las columnas numéricas salvo `temporada`. Son las únicas
+  que determinan los pesos de las componentes.
+- **`temporada` (suplementaria cuantitativa).** Es numérica, pero describe la *época*, no al
+  jugador. Si entrara como activa, la tendencia histórica de la liga (sobre todo el auge del triple
+  después de 2015) se mezclaría con las diferencias entre jugadores, y alguna componente podría
+  terminar midiendo *cuándo* jugó alguien en vez de *cómo* juega. Proyectarla después permite
+  medir esa relación sin que intervenga en la construcción de los ejes.
+- **`posicion` (suplementaria cualitativa).** Es categórica (17 etiquetas originales, reducidas a
+  las 5 posiciones básicas). Se usa para comprobar si los ejes construidos sin ella reproducen la
+  distinción tradicional entre posiciones.
+- **`jugador` y `equipo` (identificadores).** No son variables en sentido estadístico: no tiene
+  sentido correlacionarlas ni promediarlas. Sirven para nombrar los casos.
+
+Las `r p` variables activas se agrupan en 10 bloques temáticos, que facilitan la lectura de las
+correlaciones y de las cargas:
+
+```{r tabla-bloques}
+dicc %>%
+  mutate(bloque = factor(bloque, levels = orden_bloques)) %>%
+  group_by(Bloque = bloque) %>%
+  summarise(`Variables` = n(), `Columnas` = paste(etiqueta, collapse = ", "), .groups = "drop") %>%
+  kable(caption = paste0("Las ", p, " variables activas, por bloque"))
+```
+
+**Tratamiento de `porc_triple`.** La variable está vacía en `r num(n_sin_triple)` filas
+(`r pct(n_sin_triple / n)` % de la base). No se trata de datos faltantes en sentido estricto: son
+jugadores que no intentaron ningún triple en la temporada, de modo que el porcentaje es 0/0 y está
+matemáticamente indefinido. Se concentran antes de 2015 y en pívots. Se rellenan con 0 porque, para
+efectos de la producción de triples, ese jugador no aporta ninguno. Como cualquier imputación puede
+introducir sesgo, en la sección 12 se repite el análisis sin esas filas para comprobar que las
+conclusiones no dependen de esta decisión.
+
+# 2. Redundancia: ¿cuánta información se repite?
+
+Antes de calcular componentes conviene examinar la matriz de correlaciones, porque el PCA no hace
+otra cosa que reorganizar esa matriz. Si las variables fueran independientes entre sí, cada
+componente recogería aproximadamente una variable y no habría nada que resumir.
+
+```{r correlaciones, fig.width = 10, fig.height = 10}
+R <- cor(X)
+orden <- hclust(as.dist(1 - abs(R)))$order
+Rord <- R[orden, orden]
+dimnames(Rord) <- list(etiquetas[vars][orden], etiquetas[vars][orden])
+
+as.data.frame(as.table(Rord)) %>%
+  setNames(c("v1", "v2", "r")) %>%
+  ggplot(aes(v1, v2, fill = r)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "#b2182b", mid = "white", high = "#2166ac",
+                       limits = c(-1, 1), name = "r") +
+  coord_equal() +
+  labs(title = paste0("Matriz de correlaciones de las ", p, " variables activas"),
+       subtitle = "Ordenada por agrupamiento jerárquico: los bloques azules son grupos de columnas redundantes",
+       x = NULL, y = NULL) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 7.5),
+        axis.text.y = element_text(size = 7.5),
+        panel.grid = element_blank())
+```
+
+```{r cifras-correlacion}
+Ru <- R; Ru[lower.tri(Ru, diag = TRUE)] <- NA
+pares <- as.data.frame(as.table(Ru)) %>% filter(!is.na(Freq)) %>%
+  setNames(c("v1", "v2", "r")) %>% arrange(desc(abs(r)))
+n_pares   <- nrow(pares)
+n_fuertes <- sum(abs(pares$r) >= 0.7)
+n_casi1   <- sum(abs(pares$r) >= 0.95)
+n_debiles <- sum(abs(pares$r) < 0.3)
+
+max_abs  <- apply(abs(R) - diag(p), 1, max)
+mas_sola <- names(sort(max_abs))[1:3]
+
+pares %>% head(10) %>%
+  transmute(`Variable 1` = etiquetas[as.character(v1)], `Variable 2` = etiquetas[as.character(v2)],
+            r = dec(r, 3)) %>%
+  kable(caption = "Los diez pares de variables más correlacionados")
+```
+
+```{r dependencias}
+# Columnas que son, por construcción, sumas de otras (salvo redondeo)
+dependencias <- tibble(
+  `Columna` = c("Reb. totales/p", "Tiros intentados/p", "Win Shares", "BPM", "Puntos/p"),
+  `Es la suma de` = c("Reb. of./p + Reb. def./p", "Dobles intentados/p + Triples intentados/p",
+                      "Win Shares of. + Win Shares def.", "BPM of. + BPM def.",
+                      "2·Dobles + 3·Triples + Libres anotados"),
+  `Diferencia máxima` = c(
+    max(abs(X$rebotes_totales_pp - X$rebotes_of_pp - X$rebotes_def_pp)),
+    max(abs(X$tiros_intentados_pp - X$dobles_intentados_pp - X$triples_intentados_pp)),
+    max(abs(X$victorias_total - X$victorias_ofensiva - X$victorias_defensa)),
+    max(abs(X$masmenos_total - X$masmenos_ofensivo - X$masmenos_defensivo)),
+    max(abs(X$puntos_pp - 2 * X$dobles_anotados_pp - 3 * X$triples_anotados_pp - X$libres_anotados_pp))),
+  `r con la suma` = c(
+    cor(X$rebotes_totales_pp, X$rebotes_of_pp + X$rebotes_def_pp),
+    cor(X$tiros_intentados_pp, X$dobles_intentados_pp + X$triples_intentados_pp),
+    cor(X$victorias_total, X$victorias_ofensiva + X$victorias_defensa),
+    cor(X$masmenos_total, X$masmenos_ofensivo + X$masmenos_defensivo),
+    cor(X$puntos_pp, 2 * X$dobles_anotados_pp + 3 * X$triples_anotados_pp + X$libres_anotados_pp))
+) %>% mutate(`Diferencia máxima` = dec(`Diferencia máxima`, 2), `r con la suma` = dec(`r con la suma`, 4))
+kable(dependencias, caption = "Columnas que son combinación lineal exacta de otras")
+```
+
+**Interpretación.**
+
+- **La redundancia es alta y está concentrada.** De los `r num(n_pares)` pares posibles,
+  `r num(n_fuertes)` tienen $|r| \geq 0{,}7$ y `r n_casi1` superan 0,95. Una correlación de 0,95
+  implica $r^2 \approx 0{,}90$: una variable explica cerca del 90 % de la varianza de la otra, de modo
+  que en la práctica son la misma medición repetida. El agrupamiento de la matriz muestra que esa
+  redundancia no está dispersa, sino organizada en **bloques**. El más grande es el de **volumen**
+  (puntos, tiros, minutos, Win Shares, VORP, PER), seguido del **interior** (rebotes y tapones, por
+  partido y en porcentaje), del **triple** (intentos, aciertos, proporción de tiros de tres) y del
+  **equipo** (margen, margen ajustado y % de victorias, con $r > 0{,}96$ entre ellos).
+- **Hay dependencias lineales exactas.** La tabla muestra cinco columnas que son, salvo redondeo,
+  combinación lineal de otras (correlación de 0,9998 o más con la suma). Esto tiene una consecuencia
+  algebraica directa: la matriz de correlaciones es **casi singular** y algunos de sus autovalores
+  serán prácticamente cero (sección 4). Esas columnas no añaden ninguna dirección de variación nueva.
+- **Algunas variables apenas se relacionan con el resto.** `r etiquetas[mas_sola[1]]` (su correlación
+  máxima con cualquier otra es `r dec(max_abs[mas_sola[1]])`), `r etiquetas[mas_sola[2]]`
+  (`r dec(max_abs[mas_sola[2]])`) y `r etiquetas[mas_sola[3]]` (`r dec(max_abs[mas_sola[3]])`) varían
+  casi por su cuenta. Como el PCA resume la varianza **compartida**, se anticipa que estas variables
+  quedarán mal representadas por las primeras componentes (sección 6).
+- **¿Es pertinente el PCA?** Sí. El `r pct(1 - n_debiles / n_pares, 0)` % de los pares tiene
+  $|r| \geq 0{,}3$, pero lo decisivo no es esa proporción, sino la estructura en bloques: el PCA
+  aprovecha precisamente que grupos enteros de columnas se mueven juntos para sustituirlos por una
+  sola dirección.
+
+**Implicación.** El tablero de `r p_total` columnas contiene muchas menos piezas de información
+independientes de las que aparenta. Es razonable esperar que unas pocas componentes recojan la
+mayor parte de la variabilidad de las `r p` variables activas.
+
+# 3. ¿Matriz de covarianzas o de correlaciones?
+
+```{r desviaciones}
+desv <- tibble(Variable = etiquetas[vars], Bloque = bloque[vars], `Desviación` = sapply(X, sd)) %>%
+  arrange(desc(`Desviación`))
+
+bind_rows(head(desv, 5), tail(desv, 5)) %>%
+  mutate(`Desviación` = dec(`Desviación`, 3)) %>%
+  kable(caption = "Las cinco variables con mayor y menor desviación típica, cada una en su unidad")
+```
+
+El PCA sobre la matriz de **covarianzas** busca las direcciones de máxima varianza medida en las
+unidades originales. Eso solo tiene sentido si todas las variables comparten unidad, y aquí no es
+así: la base mezcla minutos totales (desviación de `r num(round(sd(X$minutos_totales)))`),
+porcentajes de 0 a 100, proporciones de 0 a 1 y promedios por partido. La desviación más grande es
+`r num(round(max(desv$Desviación) / min(desv$Desviación)))` veces la más pequeña, una diferencia que
+se debe exclusivamente a la escala. Como en el ejemplo de clase del «precio en pesos frente a la
+calificación de 1 a 5», la primera componente quedaría capturada por la variable de mayor magnitud
+numérica. La comparación lo confirma:
+
+```{r pca-dos-maneras}
+pca_crudo <- prcomp(X, center = TRUE, scale. = FALSE)
+pca       <- prcomp(X, center = TRUE, scale. = TRUE)
+
+info_crudo <- pca_crudo$sdev^2 / sum(pca_crudo$sdev^2)
+lambda     <- pca$sdev^2
+info       <- lambda / sum(lambda)
+
+pesos_crudo <- sort(abs(pca_crudo$rotation[, 1]), decreasing = TRUE)
+
+tibble(`Versión` = c("Covarianzas (sin estandarizar)", "Correlaciones (estandarizado)"),
+       `% de varianza en la 1ª componente` = c(pct(info_crudo[1]), pct(info[1])),
+       `Variable con mayor peso en la 1ª` = c(etiquetas[names(pesos_crudo)[1]],
+                                              etiquetas[names(which.max(abs(pca$rotation[, 1])))]),
+       `Su peso` = c(dec(pesos_crudo[1], 3), dec(max(abs(pca$rotation[, 1])), 3))) %>%
+  kable(caption = "La primera componente según la matriz utilizada")
+```
+
+**Interpretación.** Con la matriz de covarianzas, la primera componente concentra el
+`r pct(info_crudo[1])` % de la varianza total y su vector de pesos es prácticamente un vector
+canónico: `r etiquetas[names(pesos_crudo)[1]]` tiene peso `r dec(pesos_crudo[1], 3)` sobre un
+máximo de 1. Esa componente no resume nada; reproduce una sola columna porque esa columna se mide en
+miles. Un porcentaje de varianza tan alto es engañoso: no indica una estructura fuerte en los datos,
+sino una diferencia de unidades. Con la matriz de correlaciones (variables estandarizadas, cada una
+con varianza 1), la primera componente recoge el `r pct(info[1])` % y ningún peso supera
+`r dec(max(abs(pca$rotation[, 1])), 2)`: la componente se reparte entre muchas variables, que es lo
+esperable de un resumen genuino. **En adelante se trabaja con la versión estandarizada**, en la que
+las `r p` variables activas parten con el mismo peso.
+
+# 4. Cuánta varianza recoge cada componente
+
+> **Resultado de referencia.** Con variables estandarizadas, la varianza total es la traza de la
+> matriz de correlaciones, es decir, la suma de `r p` unos:
+>
+> $$\lambda_1 + \lambda_2 + \dots + \lambda_{`r p`} = \operatorname{tr}(\mathbf{R}) = `r p`$$
+>
+> **Interpretación.** Las componentes no crean ni destruyen varianza: la redistribuyen. Por eso
+> $\lambda_k$ se lee en «unidades de variable original»: una componente con $\lambda > 1$ recoge
+> más que cualquier columna por separado y una con $\lambda < 1$, menos. Un $\lambda \approx 0$
+> indica una dirección en la que los datos prácticamente no varían, lo que ocurre cuando una
+> columna es combinación lineal de otras.
+
+```{r suma-lambdas}
+c(suma_de_las_varianzas = round(sum(lambda), 2),
+  componentes_con_lambda_casi_cero = sum(lambda < 0.001),
+  componentes_con_lambda_menor_a_0.1 = sum(lambda < 0.1))
+```
+
+```{r paralelo}
+# Análisis paralelo (Horn): ¿cuánto recogería cada componente si las columnas
+# fueran ruido puro, sin ninguna relación entre ellas? Se simulan 20 bases de
+# ruido del mismo tamaño y se toma el percentil 95 de cada autovalor.
+set.seed(2026)
+lambda_azar <- replicate(20, eigen(cor(matrix(rnorm(n * p), n, p)),
+                                   symmetric = TRUE, only.values = TRUE)$values)
+umbral_azar <- apply(lambda_azar, 1, quantile, 0.95)
+
+k_kaiser   <- sum(lambda > 1)
+k_80       <- which(cumsum(info) > 0.80)[1]
+k_paralelo <- which(lambda < umbral_azar)[1] - 1
+```
+
+```{r scree, fig.height = 5}
+k_graf <- 15
+reparto <- tibble(comp = factor(paste0("C", 1:k_graf), levels = paste0("C", 1:k_graf)),
+                  lambda = lambda[1:k_graf], azar = umbral_azar[1:k_graf])
+
+ggplot(reparto, aes(comp)) +
+  geom_col(aes(y = lambda), fill = ifelse(1:k_graf <= 4, "#2166ac", "grey70"), width = 0.7) +
+  geom_text(aes(y = lambda, label = dec(lambda, 1)), vjust = -0.4, size = 3.3) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "grey30") +
+  geom_line(aes(y = azar, group = 1), color = "#d95f02", linewidth = 0.9) +
+  annotate("label", x = 11, y = 4.2, label = "Línea punteada: λ = 1 (Kaiser)", size = 3.2,
+           color = "grey30", label.size = 0, hjust = 0) +
+  annotate("label", x = 11, y = 5.4, label = "Línea naranja: ruido puro (paralelo)", size = 3.2,
+           color = "#d95f02", label.size = 0, hjust = 0) +
+  labs(title = "Autovalores (λ) de las primeras 15 componentes",
+       subtitle = paste0("En azul, las cuatro que se interpretan · las otras ", p - k_graf,
+                         " tienen λ menor que ", dec(lambda[k_graf + 1], 1), " cada una"),
+       x = "Componente", y = "λ (en unidades de variable original)")
+```
+
+```{r acumulado, fig.height = 4.5}
+tibble(k = 1:p, acum = cumsum(info)) %>%
+  ggplot(aes(k, 100 * acum)) +
+  geom_line(color = "#b2182b", linewidth = 1) +
+  geom_point(color = "#b2182b", size = 1.6) +
+  geom_hline(yintercept = 80, linetype = "dashed", color = "grey40") +
+  geom_vline(xintercept = k_80, linetype = "dotted", color = "grey40") +
+  annotate("text", x = k_80 + 1, y = 70, hjust = 0, size = 3.4,
+           label = paste0(k_80, " componentes superan el 80 %")) +
+  scale_x_continuous(breaks = c(1, 4, k_80, 10, 20, 30, 40, 50)) +
+  labs(title = "Varianza acumulada al ir sumando componentes",
+       x = "Número de componentes", y = "% de la varianza total")
+```
+
+```{r criterios}
+tibble(Criterio = c("Superar el 80 % de la varianza (el de clase)",
+                    "Kaiser: λ > 1",
+                    "Análisis paralelo: λ mayor que el del ruido",
+                    "Codo del gráfico de sedimentación"),
+       `Componentes` = c(k_80, k_kaiser, k_paralelo, 3),
+       `% de varianza acumulada` = pct(cumsum(info)[c(k_80, k_kaiser, k_paralelo, 3)])) %>%
+  kable(caption = "¿Cuántas componentes conservar? Cuatro criterios")
+```
+
+**Interpretación.**
+
+- **La primera componente es dominante.** Recoge el `r pct(info[1])` % de la varianza total, con
+  $\lambda_1 = `r dec(lambda[1], 1)`$: equivale a unas `r round(lambda[1])` variables originales. Un
+  primer autovalor tan grande frente al segundo ($\lambda_2 = `r dec(lambda[2], 1)`$) es la huella de
+  un **factor general**: un gran número de columnas comparte una misma fuente de variación (el
+  volumen de juego, como se verá en la sección 5).
+- **La varianza se acumula rápido y luego se estanca.** Dos componentes llegan al
+  `r pct(sum(info[1:2]))` %, cuatro al `r pct(sum(info[1:4]))` % y hacen falta `r k_80` para superar
+  el 80 % (`r pct(sum(info[1:k_80]))` %). A partir de la quinta, cada componente añade menos de
+  `r pct(info[5], 0)` puntos porcentuales.
+- **La base tiene menos dimensiones de las que aparenta.** `r sum(lambda < 0.001)` componentes tienen
+  $\lambda < 0{,}001$. Cada una corresponde a una identidad aritmética entre columnas: las cinco
+  sumas de la sección 2, más los tiros anotados (dobles + triples anotados), el TRB% (combinación de
+  ORB% y DRB%) y el eFG% (que se obtiene del % de tiro de campo y de la proporción de triples). No
+  llegan a cero exacto solo por el redondeo de la base. Además, `r sum(lambda < 0.1)` de las `r p`
+  componentes tienen $\lambda < 0{,}1$. En otras palabras, el **rango efectivo** de la matriz es muy
+  inferior al número de columnas.
+- **Por qué los criterios no coinciden.** El codo indica 3, el criterio del 80 % indica `r k_80`,
+  Kaiser `r k_kaiser` y el análisis paralelo `r k_paralelo`. La discrepancia tiene una explicación:
+  con `r num(n)` observaciones y solo `r p` variables, los autovalores de una matriz de ruido se
+  concentran muy cerca de 1 (la razón $p/n$ es de apenas `r dec(p / n, 4)`). El umbral del análisis
+  paralelo termina, por tanto, casi sobre la línea de Kaiser, y ambos aceptan componentes que son
+  reales en sentido estadístico pero que aportan poca varianza. Con muestras grandes, distinguir
+  señal de ruido no es el problema; el problema es decidir qué componentes son **interpretables**.
+
+**Decisión.** Se interpretan **cuatro componentes** (`r pct(sum(info[1:4]))` % de la varianza),
+porque son las que admiten una lectura sustantiva clara (sección 5) y porque después de la cuarta
+la curva se aplana. Las `r k_80` del criterio del 80 % se usan como referencia para medir cuánto se
+pierde con el resumen de cuatro (sección 6).
+
+# 5. Interpretación de las componentes
+
+> **Resultado de referencia.** Para interpretar una componente se usan las **cargas**, que son los
+> pesos reescalados por la desviación típica de la componente:
+>
+> $$\text{carga}_{jk} = w_{jk}\,\sqrt{\lambda_k} = \operatorname{cor}(X_j, C_k)$$
+>
+> **Interpretación.** Con `r p` variables los pesos $w_{jk}$ son necesariamente pequeños (cumplen
+> $\sum_j w_{jk}^2 = 1$), lo que dificulta compararlos. La carga, en cambio, es una correlación:
+> una carga de 0,8 indica que la variable y la componente son casi la misma cosa, y una de 0,2 que
+> están poco relacionadas. Además, el cuadrado de la carga es la proporción de la varianza de la
+> variable que recoge esa componente.
+
+```{r signos}
+# El signo de una componente es arbitrario. Se fija para que se lea fácil:
+# C1 positiva = más puntos; C2 positiva = más rebote ofensivo;
+# C3 positiva = equipo que gana más; C4 positiva = más robos.
+ancla <- c("puntos_pp", "porc_rebotes_of_disp", "porc_victorias_equipo", "porc_robos_equipo")
+for (j in seq_along(ancla)) {
+  if (pca$rotation[ancla[j], j] < 0) {
+    pca$rotation[, j] <- -pca$rotation[, j]
+    pca$x[, j]        <- -pca$x[, j]
+  }
+}
+cargas <- pca$rotation %*% diag(pca$sdev)
+colnames(cargas) <- paste0("C", 1:p)
+```
+
+```{r mapa-cargas, fig.width = 9, fig.height = 12}
+k_ver <- k_80
+orden_vars <- dicc %>% mutate(bloque = factor(bloque, levels = orden_bloques)) %>%
+  arrange(bloque) %>% pull(var)
+
+as.data.frame(cargas[, 1:k_ver]) %>%
+  mutate(var = rownames(cargas)) %>%
+  pivot_longer(-var, names_to = "comp", values_to = "carga") %>%
+  mutate(comp = factor(comp, levels = paste0("C", 1:k_ver)),
+         variable = factor(etiquetas[var], levels = rev(etiquetas[orden_vars])),
+         bloque = factor(bloque[var], levels = orden_bloques)) %>%
+  ggplot(aes(comp, variable, fill = carga)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = ifelse(abs(carga) >= 0.4, sub("\\.", ",", sprintf("%.1f", carga)), "")),
+            size = 3) +
+  facet_grid(bloque ~ ., scales = "free_y", space = "free_y") +
+  scale_fill_gradient2(low = "#b2182b", mid = "white", high = "#2166ac",
+                       limits = c(-1, 1), name = "Carga") +
+  labs(title = paste0("Cargas de las ", k_ver, " primeras componentes"),
+       subtitle = "Correlación de cada variable con cada componente · se escriben las de |carga| ≥ 0,4",
+       x = NULL, y = NULL) +
+  theme(panel.grid = element_blank(),
+        strip.text.y = element_text(angle = 0, hjust = 0, face = "bold"),
+        axis.text.y = element_text(size = 8.5))
+```
+
+```{r top-cargas}
+top_cargas <- function(j, m = 5) {
+  cj <- cargas[, j]
+  pos <- head(sort(cj[cj > 0], decreasing = TRUE), m)
+  neg <- head(sort(cj[cj < 0]), m)
+  fmt <- function(v) if (length(v) == 0) "—" else paste0(etiquetas[names(v)], " (", dec(v), ")", collapse = ", ")
+  tibble(Componente = paste0("C", j), `% varianza` = pct(info[j]),
+         `Polo positivo` = fmt(pos), `Polo negativo` = fmt(neg[abs(neg) >= 0.25]))
+}
+bind_rows(lapply(1:k_ver, top_cargas)) %>%
+  kable(caption = "Variables con mayor carga en cada componente (signos ya fijados)")
+
+# Cuántas variables de cada bloque se cargan fuerte (|carga| >= 0,5) en cada componente
+fuerte <- function(j, b) sum(abs(cargas[bloque == b, j]) >= 0.5)
+```
+
+```{r nombres}
+nombres_comp <- c(C1 = "C1 · Volumen y valor",
+                  C2 = "C2 · Interior ↔ exterior",
+                  C3 = "C3 · Equipo ganador y eficiencia",
+                  C4 = "C4 · Defensa activa ↔ tiro eficiente")
+```
+
+**C1 · Volumen y valor (`r pct(info[1])` % de la varianza).** Es una componente de **tamaño**: casi
+todas las cargas son positivas y muchas superan 0,85, entre ellas Win Shares
+(`r dec(cargas["victorias_total", 1])`), puntos (`r dec(cargas["puntos_pp", 1])`), PER
+(`r dec(cargas["indice_eficiencia", 1])`), VORP (`r dec(cargas["valor_sobre_reemplazo", 1])`),
+minutos por partido (`r dec(cargas["minutos_pp", 1])`), tiros y tiros libres. Que una sola dirección
+reúna tantas variables se explica por un mecanismo común: **los minutos**. Un jugador que juega más
+acumula más puntos, más rebotes y más Win Shares, y además juega más *porque* es mejor, así que
+cantidad y calidad quedan entrelazadas. Las variables que no dependen del volumen (edad,
+`r dec(cargas["edad", 1])`; % de triple, `r dec(cargas["porc_triple", 1])`) tienen carga casi nula.
+Es el equivalente del «nivel general» visto en clase y funciona como un índice de peso del jugador
+en su equipo.
+
+**C2 · Interior ↔ exterior (`r pct(info[2])` % de la varianza).** Es una componente **bipolar** o de
+**forma**: contrapone dos estilos en lugar de medir cuánto se juega. En el polo positivo están los
+porcentajes de rebote (ORB% `r dec(cargas["porc_rebotes_of_disp", 2])`, TRB%
+`r dec(cargas["porc_rebotes_tot_disp", 2])`) y los tapones (BLK%
+`r dec(cargas["porc_tapones_equipo", 2])`); en el negativo, el triple (intentos por partido
+`r dec(cargas["triples_intentados_pp", 2])`), la creación (AST%
+`r dec(cargas["porc_asistencias_equipo", 2])`) y el % de tiros libres
+(`r dec(cargas["porc_libre", 2])`). La oposición refleja la división funcional del juego: quien juega
+cerca del aro rebotea y tapona, quien juega lejos tira de tres y distribuye. Por construcción es
+ortogonal a C1, así que describe *dónde* juega el jugador con independencia de *cuánto* aporta. Es
+la misma dirección que el primer eje del taller anterior (sección 9).
+
+**C3 · Equipo ganador y eficiencia (`r pct(info[3])` % de la varianza).** En el polo positivo
+dominan las tres variables de equipo (margen `r dec(cargas["margen_victoria", 3])`, % de victorias
+`r dec(cargas["porc_victorias_equipo", 3])`), acompañadas de la eficiencia de tiro (eFG%
+`r dec(cargas["porc_tiro_efectivo", 3])`, TS% `r dec(cargas["porc_tiro_verdadero", 3])`) y del WS/48
+(`r dec(cargas["victorias_por_48min", 3])`). En el negativo aparecen el volumen de dobles intentados
+(`r dec(cargas["dobles_intentados_pp", 3])`), las pérdidas (`r dec(cargas["perdidas_pp", 3])`) y el
+uso (`r dec(cargas["porc_uso_jugador", 3])`). Una vez descontado el volumen general (que ya recoge
+C1), esta componente separa al jugador **eficiente en un equipo que gana** del jugador de **alto
+uso y baja eficiencia**, típico de equipos perdedores donde alguien tiene que tirar. Sirve para
+distinguir producción que se traduce en victorias de producción «vacía».
+
+**C4 · Defensa activa ↔ tiro eficiente (`r pct(info[4])` % de la varianza).** En el polo positivo
+están los robos (STL% `r dec(cargas["porc_robos_equipo", 4])`), las pérdidas (TOV%
+`r dec(cargas["porc_perdidas_jugada", 4])`), el BPM defensivo
+(`r dec(cargas["masmenos_defensivo", 4])`) y las asistencias; en el negativo, la eficiencia de tiro
+(eFG% `r dec(cargas["porc_tiro_efectivo", 4])`) y el triple. La componente opone al jugador de
+**alta actividad** (defiende, roba, mueve el balón y lo arriesga) al **finalizador eficiente**, que
+toca menos el balón pero convierte bien lo que recibe. Es un matiz de estilo, útil para distinguir
+entre jugadores parecidos en C1 y C2.
+
+**C5 a C`r k_ver`.** Cada una recoge entre el `r pct(info[k_ver])` % y el `r pct(info[5])` % de la
+varianza, y sus cargas son moderadas (pocas superan 0,4 en valor absoluto). C5 opone la eficiencia
+cerca del aro (% de tiro de campo, FTr) al triple; C6 vuelve a contraponer el contexto de equipo y la
+defensa activa, y C7 está dominada por los **partidos jugados** (`r dec(cargas["partidos_jugados", 7])`),
+es decir, por la disponibilidad física del jugador. Al no tener una interpretación limpia, no se
+incluyen en el resumen, pero sí se usan para medir la pérdida de información.
+
+**Advertencia sobre los nombres.** Los nombres de las componentes son una **interpretación nuestra**
+a partir de las cargas; la técnica no los produce. Indican qué columnas varían juntas en esta base,
+pero no demuestran que detrás de cada componente exista una habilidad latente. Esa es otra pregunta,
+la del análisis factorial.
+
+# 6. Calidad de representación: qué se pierde
+
+> **Resultado de referencia.** La **comunalidad** de la variable $j$ con $k$ componentes es la suma
+> de sus cargas al cuadrado:
+>
+> $$h_j^2 = \text{carga}_{j1}^2 + \dots + \text{carga}_{jk}^2$$
+>
+> **Interpretación.** $h_j^2$ es la proporción de la varianza de la variable $j$ que reproducen las
+> $k$ componentes retenidas. El complemento, $1 - h_j^2$, es lo que el resumen no recoge de esa
+> columna. Una variable con comunalidad baja tiene que analizarse por separado.
+
+```{r comunalidad, fig.width = 9, fig.height = 10}
+com4  <- rowSums(cargas[, 1:4]^2)
+com80 <- rowSums(cargas[, 1:k_80]^2)
+
+tibble(var = vars, `4 componentes` = com4, `Con las del 80 %` = com80) %>%
+  mutate(variable = factor(etiquetas[var], levels = etiquetas[var][order(com4)]),
+         bloque = factor(bloque[var], levels = orden_bloques)) %>%
+  ggplot(aes(y = variable)) +
+  geom_col(aes(x = `Con las del 80 %`), fill = "grey85", width = 0.75) +
+  geom_col(aes(x = `4 componentes`, fill = bloque), width = 0.75) +
+  geom_vline(xintercept = 0.5, linetype = "dashed", color = "grey30") +
+  scale_fill_manual(values = col_bloque, name = "Bloque") +
+  scale_x_continuous(labels = function(x) paste0(100 * x, " %"), limits = c(0, 1)) +
+  labs(title = "Comunalidad de cada variable",
+       subtitle = paste0("Color: con las 4 componentes interpretadas · gris: con las ", k_80,
+                         " del criterio del 80 %"),
+       x = "% de la varianza de la variable recogida", y = NULL) +
+  theme(axis.text.y = element_text(size = 8))
+```
+
+```{r cifras-comunalidad}
+mal4  <- sort(com4[com4 < 0.5])
+mal80 <- sort(com80[com80 < 0.5])
+bien4 <- sum(com4 >= 0.8)
+
+tibble(var = names(mal4)) %>%
+  transmute(Variable = etiquetas[var], Bloque = bloque[var],
+            `Con 4 componentes (%)` = pct(com4[var], 0),
+            `Con las del 80 % (%)` = pct(com80[var], 0)) %>%
+  kable(caption = "Variables con comunalidad menor al 50 % en el resumen de cuatro componentes")
+```
+
+**Interpretación.**
+
+- Con cuatro componentes, **`r bien4` de las `r p` variables** tienen una comunalidad del 80 % o más.
+  Son, sobre todo, las de volumen, valor global e interior: justamente los bloques más redundantes de
+  la sección 2. Esto no es casual: una variable que comparte mucha varianza con otras queda bien
+  representada por la dirección común.
+- **`r length(mal4)` variables quedan por debajo del 50 %.** Las peor representadas son
+  `r etiquetas[names(mal4)[1]]` (`r pct(mal4[1], 0)` %), `r etiquetas[names(mal4)[2]]`
+  (`r pct(mal4[2], 0)` %) y `r etiquetas[names(mal4)[3]]` (`r pct(mal4[3], 0)` %). Coinciden con las
+  variables más aisladas de la matriz de correlaciones. La edad, por ejemplo, no se correlaciona por
+  encima de `r dec(max_abs["edad"])` con ninguna otra columna, así que ninguna componente construida
+  a partir de varianza compartida puede recogerla. Los votos al MVP tienen otro problema: su
+  distribución es casi degenerada (la gran mayoría de los jugadores tiene 0), y una relación tan
+  concentrada en unos pocos casos extremos no se captura bien con correlaciones lineales.
+- Al pasar a `r k_80` componentes la mayoría mejora, pero
+  `r if (length(mal80) == 0) "ninguna queda por debajo del 50 %" else paste0(length(mal80), " siguen por debajo del 50 %: ", paste(etiquetas[names(mal80)], collapse = ", "))`.
+  Añadir componentes no resuelve el problema, porque esas variables varían en direcciones propias que
+  solo aparecerían en componentes de orden muy alto.
+
+**Implicación.** La pérdida de información no es uniforme: el resumen conserva lo redundante y
+descarta lo idiosincrático. Por eso las cuatro componentes deben complementarse con las variables
+mal representadas que sean relevantes para la decisión. Por ejemplo, la edad y los partidos jugados
+son esenciales al evaluar un contrato, y el % de tiros libres al evaluar a un tirador; ninguna de
+ellas está contenida en el resumen.
+
+# 7. El mapa de individuos y el círculo de correlaciones
+
+```{r mapa}
+base <- base %>% mutate(C1 = pca$x[, 1], C2 = pca$x[, 2], C3 = pca$x[, 3], C4 = pca$x[, 4])
+
+ggplot(base, aes(C1, C2)) +
+  geom_hline(yintercept = 0, color = "grey70") +
+  geom_vline(xintercept = 0, color = "grey70") +
+  geom_point(alpha = 0.12, size = 0.7, color = "#2166ac") +
+  annotate("text", x = max(base$C1), y = min(base$C2), hjust = 1, vjust = 0,
+           label = "→ más volumen y valor", size = 3.6, color = "grey25") +
+  annotate("text", x = min(base$C1), y = max(base$C2), hjust = 0, vjust = 1,
+           label = "↑ más juego interior", size = 3.6, color = "grey25") +
+  coord_equal() +
+  labs(title = paste0(num(n), " jugadores-temporada (1982-2022) en el plano de las dos primeras componentes"),
+       subtitle = paste0("El plano recoge el ", pct(sum(info[1:2])), " % de la varianza de las ", p, " variables activas"),
+       x = paste0(nombres_comp["C1"], " (", pct(info[1]), " %)"),
+       y = paste0(nombres_comp["C2"], " (", pct(info[2]), " %)"))
+```
+
+Con `r p` variables, el biplot clásico (individuos y flechas en el mismo gráfico) resulta ilegible:
+las flechas se superponen entre sí y tapan la nube de puntos. Por eso se presenta en dos gráficos
+separados: el mapa de individuos (arriba) y el **círculo de correlaciones** de las variables (abajo).
+
+> **Resultado de referencia.** En el círculo, las coordenadas de cada flecha son las cargas de la
+> variable en C1 y C2:
+>
+> $$\text{flecha}_j = \big(w_{j1}\sqrt{\lambda_1},\; w_{j2}\sqrt{\lambda_2}\big)$$
+>
+> que es la misma fórmula de las flechas del biplot vista en clase. **Interpretación.** El cuadrado
+> de la longitud de la flecha es la comunalidad de la variable en el plano: una flecha que llega al
+> borde (longitud 1) está representada por completo, y una cercana al centro casi no se ve. La
+> correlación entre dos variables se aproxima por el **producto escalar** de sus flechas,
+> $r_{jl} \approx \lVert \mathbf{a}_j \rVert\,\lVert \mathbf{a}_l \rVert \cos\theta_{jl}$, así que el
+> ángulo solo es una buena guía cuando ambas flechas son largas.
+
+```{r circulo, fig.width = 9.5, fig.height = 9.5}
+flechas <- tibble(var = vars, etiqueta = etiquetas[vars],
+                  bloque = factor(bloque[vars], levels = orden_bloques),
+                  x = cargas[, 1], y = cargas[, 2], largo = sqrt(x^2 + y^2))
+circulo <- tibble(t = seq(0, 2 * pi, length.out = 200), x = cos(t), y = sin(t))
+# Con tantas flechas no caben todas las etiquetas: se rotulan las dos más largas de cada bloque
+rotulos <- flechas %>% filter(largo >= 0.5) %>%
+  group_by(bloque) %>% slice_max(largo, n = 2) %>% ungroup()
+
+ggplot() +
+  geom_path(data = circulo, aes(x, y), color = "grey60") +
+  geom_path(data = circulo, aes(0.5 * x, 0.5 * y), color = "grey85", linetype = "dashed") +
+  geom_hline(yintercept = 0, color = "grey80") +
+  geom_vline(xintercept = 0, color = "grey80") +
+  geom_segment(data = flechas, aes(0, 0, xend = x, yend = y, color = bloque),
+               arrow = arrow(length = unit(0.18, "cm")), linewidth = 0.6) +
+  geom_label_repel(data = rotulos,
+                   aes(x, y, label = etiqueta, color = bloque),
+                   size = 3.2, max.overlaps = Inf, seed = 1, show.legend = FALSE,
+                   fill = "white", label.size = 0.15, box.padding = 0.5, force = 3,
+                   min.segment.length = 0) +
+  scale_color_manual(values = col_bloque, name = "Bloque") +
+  coord_equal(xlim = c(-1.05, 1.05), ylim = c(-1.05, 1.05)) +
+  labs(title = "Círculo de correlaciones: las variables en el plano C1-C2",
+       subtitle = "Se rotulan las dos flechas más largas de cada bloque · círculo punteado: longitud 0,5",
+       x = nombres_comp["C1"], y = nombres_comp["C2"]) +
+  theme(legend.position = "right")
+```
+
+```{r angulos}
+ang <- function(a, b) {
+  va <- cargas[a, 1:2]; vb <- cargas[b, 1:2]
+  acos(sum(va * vb) / sqrt(sum(va^2) * sum(vb^2))) * 180 / pi
+}
+pares_sel <- tribble(
+  ~a, ~b,
+  "puntos_pp", "valor_sobre_reemplazo",
+  "puntos_pp", "minutos_pp",
+  "porc_rebotes_of_disp", "porc_tapones_equipo",
+  "porc_rebotes_of_disp", "triples_intentados_pp",
+  "porc_rebotes_tot_disp", "porc_asistencias_equipo",
+  "puntos_pp", "porc_rebotes_tot_disp",
+  "rebotes_totales_pp", "porc_rebotes_tot_disp"
+) %>%
+  mutate(angulo = mapply(ang, a, b),
+         r_plano = mapply(function(a, b) sum(cargas[a, 1:2] * cargas[b, 1:2]), a, b),
+         r_real = mapply(function(a, b) cor(X[[a]], X[[b]]), a, b),
+         lectura = case_when(angulo < 35 ~ "Van juntas",
+                             angulo > 145 ~ "Van en contra",
+                             angulo > 70 & angulo < 110 ~ "Independientes",
+                             TRUE ~ "Relación parcial"))
+
+pares_sel %>%
+  transmute(`Flecha 1` = etiquetas[a], `Flecha 2` = etiquetas[b],
+            `Ángulo (°)` = round(angulo), `Lectura` = lectura,
+            `r reconstruida en el plano` = dec(r_plano), `r real` = dec(r_real)) %>%
+  kable(caption = "Ángulos entre flechas, correlación reconstruida por el plano y correlación real")
+
+n_cortas <- sum(flechas$largo < 0.5)
+```
+
+**Interpretación.**
+
+- **Un abanico hacia la derecha.** Casi todas las flechas de volumen, valor global y anotación
+  apuntan hacia +C1 y llegan cerca del borde: están bien representadas y son muy parecidas entre
+  sí. Puntos y VORP forman un ángulo de `r round(ang("puntos_pp", "valor_sobre_reemplazo"))`°
+  (r real `r dec(cor(X$puntos_pp, X$valor_sobre_reemplazo))`).
+- **El plano exagera los parecidos.** Entre ORB% y BLK% hay apenas
+  `r round(ang("porc_rebotes_of_disp", "porc_tapones_equipo"))`°, lo que sugeriría una correlación casi
+  perfecta, pero la real es `r dec(cor(X$porc_rebotes_of_disp, X$porc_tapones_equipo))`. La razón es
+  que el plano solo muestra la parte de cada variable que vive en C1 y C2; la parte en la que ambas
+  difieren está en otras componentes y no se ve. La columna «r reconstruida» de la tabla, que es el
+  producto escalar de las flechas, cuantifica cuánto de la correlación real recoge el plano.
+- **El eje vertical contrapone interior y exterior.** El rebote ofensivo y los triples intentados
+  forman un ángulo de `r round(ang("porc_rebotes_of_disp", "triples_intentados_pp"))`°, igual que en el
+  taller anterior.
+- **Volumen y estilo son casi independientes.** Entre puntos y TRB% hay
+  `r round(ang("puntos_pp", "porc_rebotes_tot_disp"))`° (r real
+  `r dec(cor(X$puntos_pp, X$porc_rebotes_tot_disp))`): la posición del jugador en el eje interior no
+  informa sobre su volumen de producción.
+- **Las versiones «por partido» y «en porcentaje» miden cosas distintas.** Los rebotes totales por
+  partido apuntan entre C1 y C2, porque combinan el estilo (rebotear) con el volumen (jugar muchos
+  minutos). El TRB% normaliza por las oportunidades de rebote y apunta casi exclusivamente hacia C2.
+  El ángulo entre ambas es de `r round(ang("rebotes_totales_pp", "porc_rebotes_tot_disp"))`°. Es un
+  ejemplo de cómo la normalización separa la habilidad del tiempo de juego.
+- **`r n_cortas` flechas tienen longitud menor que 0,5**, de modo que el plano las representa mal:
+  `r paste(etiquetas[flechas$var[flechas$largo < 0.5]][order(flechas$largo[flechas$largo < 0.5])], collapse = ", ")`.
+  Son la edad, el contexto de equipo, la defensa y parte de la eficiencia, que se ubican en C3, C4 o
+  en componentes posteriores.
+
+**Implicación.** El plano C1-C2 resume dos atributos de cada jugador, *cuánto pesa* y *dónde juega*,
+con el `r pct(sum(info[1:2]))` % de la varianza. Es adecuado para una primera clasificación, pero no
+dice nada del contexto de equipo ni de la defensa, que exigen mirar C3 y C4.
+
+# 8. Estructura de la nube: ¿grupos o continuo?
+
+## La nube de puntos
+
+```{r densidad-2d, fig.height = 6}
+ggplot(base, aes(C1, C2)) +
+  geom_point(alpha = 0.08, size = 0.6, color = "grey40") +
+  geom_density_2d(color = "#2166ac", bins = 12) +
+  coord_equal() +
+  labs(title = "Curvas de densidad sobre el plano C1-C2",
+       subtitle = "Si existieran tipos de jugador, aparecerían núcleos separados por zonas vacías (como setosa en iris)",
+       x = nombres_comp["C1"], y = nombres_comp["C2"])
+```
+
+```{r densidades-1d, fig.height = 4}
+base %>%
+  select(C1, C2) %>%
+  pivot_longer(everything(), names_to = "comp", values_to = "valor") %>%
+  mutate(comp = nombres_comp[comp]) %>%
+  ggplot(aes(valor)) +
+  geom_histogram(aes(y = after_stat(density)), bins = 60, fill = "#9ecae1", color = "white") +
+  geom_density(color = "#2166ac", linewidth = 0.9) +
+  facet_wrap(~ comp, scales = "free") +
+  labs(title = "Distribución marginal de las puntuaciones en C1 y C2", x = NULL, y = "Densidad")
+
+asim_c1 <- mean((base$C1 - mean(base$C1))^3) / sd(base$C1)^3
+```
+
+**Interpretación.** La nube forma **una sola masa, sin discontinuidades**. La distribución de C1 es
+unimodal con asimetría positiva (coeficiente de `r dec(asim_c1)`): muchos jugadores de volumen medio
+y una cola de estrellas que se alejan del resto. Es la forma esperable de una variable de «tamaño»,
+porque el talento de élite es escaso. La distribución de C2 tampoco es bimodal: la transición de
+exterior a interior es gradual. El PCA, por tanto, no revela **tipos** de jugador, sino un
+**continuo** de perfiles. Cualquier agrupación tendrá que definirse con cortes explícitos sobre el
+mapa (sección 11), no se desprende de los datos.
+
+## La posición como variable suplementaria cualitativa
+
+```{r posiciones, fig.height = 7}
+centros <- base %>% group_by(posicion) %>%
+  summarise(C1 = mean(C1), C2 = mean(C2), .groups = "drop")
+
+ggplot(base, aes(C1, C2, color = posicion)) +
+  geom_point(alpha = 0.12, size = 0.7) +
+  stat_ellipse(type = "norm", level = 0.90, linewidth = 1) +
+  geom_point(data = centros, size = 4, shape = 21, fill = "white", stroke = 1.5) +
+  geom_label_repel(data = centros, aes(label = nombres_pos[as.character(posicion)]),
+                   size = 3.6, show.legend = FALSE, seed = 2) +
+  scale_color_manual(values = col_pos, labels = nombres_pos, name = "Posición") +
+  coord_equal() +
+  labs(title = "El plano coloreado por posición, con elipses del 90 %",
+       subtitle = "Puntos blancos: centro de gravedad de cada posición",
+       x = nombres_comp["C1"], y = nombres_comp["C2"])
+```
+
+```{r cifras-posicion}
+# Fracción de un grupo A que cae dentro de la elipse del 90 % del grupo B.
+# which() descarta las filas sin grupo (NA), como las temporadas fuera de las dos épocas.
+dentro_de <- function(A, B, col = "posicion") {
+  pa <- base[which(base[[col]] == A), c("C1", "C2")] %>% as.matrix()
+  pb <- base[which(base[[col]] == B), c("C1", "C2")] %>% as.matrix()
+  mean(mahalanobis(pa, colMeans(pb), cov(pb)) <= qchisq(0.90, df = 2))
+}
+dist_c <- as.matrix(dist(centros[, c("C1", "C2")]))
+dimnames(dist_c) <- list(levels(base$posicion), levels(base$posicion))
+
+tibble(a = c("PG", "SG", "SF", "PF", "PG"), b = c("SG", "SF", "PF", "C", "C")) %>%
+  mutate(`A` = nombres_pos[a], `B` = nombres_pos[b],
+         `Distancia entre centros` = dec(mapply(function(a, b) dist_c[a, b], a, b)),
+         `% de A dentro de la elipse de B` = pct(mapply(dentro_de, a, b), 0),
+         `% de B dentro de la elipse de A` = pct(mapply(dentro_de, b, a), 0)) %>%
+  select(-a, -b) %>%
+  kable(caption = paste0("Distancias en unidades del plano (la desviación típica de C2 es ", dec(sd(base$C2)), ")"))
+```
+
+**Interpretación.** La posición no intervino en la construcción de las componentes, y aun así los
+centros de gravedad se **ordenan** sobre C2 según la secuencia tradicional: base
+(`r dec(centros$C2[centros$posicion == "PG"])`), escolta (`r dec(centros$C2[centros$posicion == "SG"])`),
+alero (`r dec(centros$C2[centros$posicion == "SF"])`), ala-pívot
+(`r dec(centros$C2[centros$posicion == "PF"])`) y pívot (`r dec(centros$C2[centros$posicion == "C"])`).
+Esto valida externamente la interpretación de C2 como eje interior-exterior. Sobre C1, en cambio, los
+centros casi coinciden (entre `r dec(min(centros$C1))` y `r dec(max(centros$C1))`): hay jugadores de
+alto y bajo volumen en todas las posiciones, lo cual confirma que C1 y la posición miden aspectos
+distintos. Las posiciones vecinas se solapan casi por completo (el
+`r pct(dentro_de("SF", "PF"), 0)` % de los aleros cae dentro de la elipse de los ala-pívots), y solo
+los extremos se separan con claridad: apenas el `r pct(dentro_de("PG", "C"), 0)` % de los bases cae
+en la zona de los pívots. **Una diferencia en las medias no implica grupos separados.** La posición
+es una etiqueta aproximada del estilo y no aporta información sobre el valor del jugador.
+
+## La época: la temporada como variable suplementaria cuantitativa
+
+`temporada` no intervino en la construcción de las componentes. Proyectarla permite medir si la
+estructura del juego **cambió con los años** sin que esa tendencia distorsione los ejes.
+
+```{r epoca-cor}
+cor_temp <- sapply(1:k_80, function(j) cor(base$temporada, pca$x[, j]))
+tibble(Componente = paste0("C", 1:k_80), `r con la temporada` = dec(cor_temp)) %>%
+  pivot_wider(names_from = Componente, values_from = `r con la temporada`) %>%
+  kable(caption = "Correlación de cada componente con la temporada")
+c_epoca <- which.max(abs(cor_temp))
+```
+
+```{r epoca-linea, fig.height = 4.5}
+base %>%
+  group_by(temporada) %>%
+  summarise(C1 = mean(C1), C2 = mean(C2), .groups = "drop") %>%
+  pivot_longer(-temporada, names_to = "comp", values_to = "promedio") %>%
+  mutate(comp = nombres_comp[comp]) %>%
+  ggplot(aes(temporada, promedio, color = comp)) +
+  geom_hline(yintercept = 0, color = "grey70") +
+  geom_line(linewidth = 1) +
+  geom_point(size = 1.5) +
+  scale_color_manual(values = c("#b2182b", "#2166ac"), name = NULL) +
+  labs(title = "Puntuación media de cada temporada en C1 y C2", x = "Temporada", y = "Media de la componente") +
+  theme(legend.position = "top")
+```
+
+```{r epoca-mapa, fig.height = 6.5}
+base <- base %>%
+  mutate(epoca = case_when(temporada <= 1989 ~ "1982-1989",
+                           temporada >= 2015 ~ "2015-2022"))
+ep <- base %>% filter(!is.na(epoca))
+
+c2_80 <- mean(ep$C2[ep$epoca == "1982-1989"]); c2_15 <- mean(ep$C2[ep$epoca == "2015-2022"])
+ep_80_en_15 <- dentro_de("1982-1989", "2015-2022", "epoca")
+
+ggplot(ep, aes(C1, C2, color = epoca)) +
+  geom_point(alpha = 0.2, size = 0.8) +
+  stat_ellipse(type = "norm", level = 0.90, linewidth = 1.1) +
+  scale_color_manual(values = c("1982-1989" = "#d95f02", "2015-2022" = "#1b9e77"), name = NULL) +
+  coord_equal() +
+  labs(title = "Los años ochenta frente a la era del triple",
+       subtitle = "Elipses: región que contiene el 90 % de cada época",
+       x = nombres_comp["C1"], y = nombres_comp["C2"]) +
+  theme(legend.position = "top")
+```
+
+**Interpretación.** La componente más asociada al tiempo es C`r c_epoca`
+(r = `r dec(cor_temp[c_epoca])` con la temporada): con los años, la liga se desplaza hacia su polo
+negativo, el del triple y el tiro eficiente, y se aleja de los robos y las pérdidas. C3 también
+crece con el tiempo (r = `r dec(cor_temp[3])`), en consonancia con el aumento de la eficiencia de
+tiro en la NBA moderna. En el plano, la media de C2 pasa de `r dec(c2_80)` en 1982-1989 a
+`r dec(c2_15)` en 2015-2022: la liga en su conjunto se desplazó hacia el lado exterior. Sin embargo,
+las elipses se solapan: el `r pct(ep_80_en_15, 0)` % de los jugadores de los ochenta cae dentro de la
+región de la era actual. De nuevo, **diferencia de medias no es separación**, como ocurría con el
+estrato en el ejemplo de clase.
+
+**Implicación.** Como el mapa mezcla 41 temporadas, la posición de un jugador en él refleja en parte
+su **época** y no solo su estilo: un pívot de 1985 y uno de 2022 con perfiles comparables no ocupan
+el mismo punto. Para evaluar el mercado actual, la comparación debe restringirse a temporadas
+recientes, como se hizo en los talleres anteriores (2015-2022).
+
+# 9. Contraste con el taller anterior
+
+En el taller de componentes principales se usaron **10 variables de perfil** y las temporadas
+2015-2022, y se identificaron dos ejes: *exterior ↔ interior* y *protagonismo*. La pregunta es si
+el PCA de la base completa, sin selección previa de variables, recupera esos mismos ejes.
+
+```{r comparacion}
+vars10 <- c("minutos_pp", "porc_uso_jugador", "porc_tiro_verdadero",
+            "porc_intentos_triple", "razon_libres_intentos",
+            "porc_asistencias_equipo", "porc_rebotes_of_disp",
+            "porc_rebotes_def_disp", "porc_tapones_equipo", "porc_robos_equipo")
+
+reciente <- base %>% filter(temporada >= 2015)
+pca10 <- prcomp(reciente[, vars10], scale. = TRUE)
+# mismos signos del taller anterior: C1 con rebote ofensivo, C2 con minutos
+s1 <- sign(pca10$rotation["porc_rebotes_of_disp", 1]); s2 <- sign(pca10$rotation["minutos_pp", 2])
+antes <- cbind(`Taller 10 var · C1 interior` = s1 * pca10$x[, 1],
+               `Taller 10 var · C2 protagonismo` = s2 * pca10$x[, 2])
+
+ahora <- as.matrix(reciente[, c("C1", "C2", "C3", "C4")])
+colnames(ahora) <- nombres_comp
+
+comp_cor <- cor(antes, ahora)
+apply(comp_cor, 2, dec) %>% `rownames<-`(rownames(comp_cor)) %>% kable(caption = paste0("Correlación entre las componentes de los dos análisis (", num(nrow(reciente)), " jugadores-temporada 2015-2022)"))
+```
+
+**Interpretación.** El eje *interior* del taller anterior tiene una correlación de
+`r dec(comp_cor[1, 2])` con la C2 actual: **es el mismo eje**, ahora obtenido sin selección manual de
+variables. El *protagonismo* tiene una correlación de `r dec(comp_cor[2, 1])` con la C1 actual, que
+es una versión más amplia de ese concepto: además de minutos y uso, incluye puntos, Win Shares y
+VORP. El resultado confirma que los ejes del taller anterior no eran un artificio de las 10
+variables elegidas.
+
+Hay, sin embargo, una diferencia instructiva: **el orden de las componentes se invirtió**. En el
+taller de 10 variables el eje interior era la primera componente; aquí es la segunda. La
+explicación está en la composición de la base. La varianza de una componente depende de cuántas
+columnas comparten esa dirección, y la base completa incluye muchas variables de volumen
+redundantes (puntos, tiros, libres, Win Shares, VORP, PER...), mientras que las 10 variables del
+taller eran casi todas tasas que no dependen de los minutos. En el PCA, **las dimensiones
+sobrerrepresentadas en la base ganan varianza**, de modo que la importancia relativa de una
+componente refleja en parte cómo se diseñó el conjunto de variables y no solo la estructura del
+juego.
+
+# 10. El costo de decidir con un solo número
+
+C1 recoge un tercio de la varianza y ordena a los jugadores por volumen y valor. ¿Qué perfiles
+quedarían fuera si la selección se basara solo en ese número? Como en el ejemplo de las tutorías de
+clase, el costo se mide en jugadores: se definen siete grupos de interés con las variables
+originales (el 20 % superior en cada una) y se cuenta cuántos de sus integrantes están también en el
+20 % superior de C1.
+
+```{r costo}
+alto <- function(v) v >= quantile(v, 0.80)
+grupos <- c(valor_sobre_reemplazo   = "Los más valiosos (VORP)",
+            puntos_pp               = "Anotadores (puntos/p)",
+            porc_rebotes_tot_disp   = "Reboteadores (TRB%)",
+            porc_asistencias_equipo = "Creadores (AST%)",
+            triples_anotados_pp     = "Tiradores de triple",
+            masmenos_defensivo      = "Defensores (BPM def.)",
+            porc_tiro_verdadero     = "Eficientes (TS%)")
+
+lista_c1 <- alto(base$C1)
+# Para cada grupo: ¿qué componente (de C1 a C4, en su dirección) lo encuentra mejor?
+mejor_comp <- function(v) {
+  aciertos <- sapply(1:4, function(j) {
+    s <- pca$x[, j] * sign(cor(pca$x[, j], base[[v]]))
+    sum(alto(base[[v]]) & alto(s))
+  })
+  c(comp = which.max(aciertos), aciertos = max(aciertos))
+}
+
+cobertura <- lapply(names(grupos), function(v) {
+  necesita <- alto(base[[v]]); m <- mejor_comp(v)
+  tibble(var = v, Grupo = grupos[v],
+         `Son` = sum(necesita),
+         `Los ve C1` = sum(necesita & lista_c1),
+         `Se le escapan a C1` = sum(necesita & !lista_c1),
+         `Mejor componente` = paste0("C", m["comp"]),
+         `Los ve la mejor` = unname(m["aciertos"]))
+}) %>% bind_rows() %>%
+  mutate(`% que se escapa` = round(100 * `Se le escapan a C1` / `Son`))
+
+cobertura %>% select(-var) %>%
+  kable(caption = "Grupos del 20 % superior en cada variable: ¿los recupera el 20 % superior de C1?")
+cob <- split(cobertura, cobertura$var)   # una tabla por grupo, nombrada por la variable
+```
+
+```{r costo-grafico, fig.height = 4.8}
+cobertura %>%
+  select(Grupo, `Los ve C1`, `Se le escapan a C1`) %>%
+  pivot_longer(-Grupo) %>%
+  mutate(Grupo = factor(Grupo, levels = rev(grupos))) %>%
+  ggplot(aes(value, Grupo, fill = name)) +
+  geom_col(width = 0.65) +
+  geom_text(aes(label = num(value)), position = position_stack(vjust = 0.5),
+            color = "white", fontface = "bold", size = 3.6) +
+  scale_fill_manual(values = c("#2166ac", "#d95f02"), name = NULL) +
+  labs(title = "Jugadores del 20 % superior en cada variable: ¿los recupera C1?",
+       x = "Jugadores-temporada", y = NULL) +
+  theme(legend.position = "top")
+```
+
+```{r casos-ocultos}
+# Reboteadores de élite que C1 deja en la mitad baja
+ocultos <- base %>% filter(alto(porc_rebotes_tot_disp), C1 < 0)
+ocultos22 <- ocultos %>% filter(temporada == 2022) %>% arrange(desc(porc_rebotes_tot_disp))
+ocultos22 %>% head(8) %>%
+  transmute(Jugador = jugador, Equipo = equipo, `Posición` = posicion,
+            `TRB%` = dec(porc_rebotes_tot_disp, 1), `Minutos/p` = dec(minutos_pp, 1),
+            C1 = dec(C1), C2 = dec(C2)) %>%
+  kable(caption = "Temporada 2022: reboteadores de élite con puntuación en C1 por debajo de la media")
+```
+
+**Interpretación.** El 20 % superior de C1 recupera a la mayoría de los **más valiosos**
+(`r num(cob$valor_sobre_reemplazo[["Los ve C1"]])` de `r num(cob$valor_sobre_reemplazo$Son)`) y de
+los **anotadores** (`r num(cob$puntos_pp[["Los ve C1"]])` de `r num(cob$puntos_pp$Son)`), lo cual es
+esperable porque esas variables tienen las cargas más altas en C1. Pero deja fuera al
+`r cob$porc_rebotes_tot_disp[["% que se escapa"]]` % de los **reboteadores**, al
+`r cob$porc_asistencias_equipo[["% que se escapa"]]` % de los **creadores**, al
+`r cob$triples_anotados_pp[["% que se escapa"]]` % de los **tiradores de triple**, al
+`r cob$masmenos_defensivo[["% que se escapa"]]` % de los **defensores** y al
+`r cob$porc_tiro_verdadero[["% que se escapa"]]` % de los **eficientes**.
+
+El mecanismo es geométrico. C1 es una combinación lineal dominada por el volumen, y un especialista
+destaca en una dirección casi **ortogonal** a ella. Su puntuación en C1 depende entonces de su
+volumen y no de su especialidad, y ese volumen suele ser moderado porque juega menos minutos. La
+columna «Mejor componente» muestra que esa información **no se perdió, sino que está en otra
+componente**: los reboteadores, por ejemplo, se recuperan mucho mejor con
+`r cob$porc_rebotes_tot_disp[["Mejor componente"]]`. En total hay `r num(nrow(ocultos))`
+jugadores-temporada en el 20 % superior del rebote con puntuación negativa en C1; en 2022 son
+`r nrow(ocultos22)`.
+
+**Implicación.** Un índice único funciona bien para identificar **estrellas**, pero es sistemáticamente
+ciego a los **especialistas** (el reboteador de rotación, el defensor, el creador que no anota), que
+suelen ser los jugadores más baratos y necesarios para completar una plantilla. Un número no
+alcanza: C1 sirve para ordenar por valor, C2 para identificar el estilo, y C3 y C4 para la
+eficiencia, el contexto y la defensa.
+
+# 11. La decisión en el mapa
+
+Como la nube no presenta grupos naturales, se proponen **dos cortes** explícitos, definidos por
+nosotros con un criterio interpretable:
+
+- **Corte vertical en C1 = una desviación típica** (`r dec(sd(base$C1))`): a la derecha quedan los
+  jugadores de mayor volumen y valor, los *ejes* del equipo; a la izquierda, la *rotación*.
+- **Corte horizontal en C2 = 0**: arriba, los *interiores*; abajo, los *exteriores*.
+
+```{r zonas, fig.height = 6.5}
+c1_corte <- sd(base$C1); c2_corte <- 0
+k_top <- round(0.10 * n)
+
+base <- base %>%
+  mutate(top = rank(-valor_sobre_reemplazo, ties.method = "first") <= k_top,
+         zona = case_when(
+           C1 >= c1_corte & C2 <  c2_corte ~ "A · Ejes exteriores",
+           C1 >= c1_corte & C2 >= c2_corte ~ "B · Ejes interiores",
+           C1 <  c1_corte & C2 <  c2_corte ~ "C · Rotación exterior",
+           TRUE                            ~ "D · Rotación interior"))
+
+ggplot(base, aes(C1, C2, color = zona)) +
+  geom_point(alpha = 0.25, size = 0.7) +
+  geom_vline(xintercept = c1_corte, linetype = "dashed") +
+  geom_hline(yintercept = c2_corte, linetype = "dashed") +
+  scale_color_manual(values = c("#d95f02", "#7570b3", "#1b9e77", "#e7298a"), name = "Zona") +
+  guides(color = guide_legend(override.aes = list(size = 3, alpha = 1))) +
+  coord_equal() +
+  labs(title = "Las cuatro zonas de decisión",
+       x = nombres_comp["C1"], y = nombres_comp["C2"])
+```
+
+```{r conteo-zonas}
+accion <- c("A · Ejes exteriores"   = "Estrellas de perímetro: renovar o fichar; revisar C3 (eficiencia) antes de un contrato máximo",
+            "B · Ejes interiores"   = "Interiores dominantes: proteger o pagar por ellos",
+            "C · Rotación exterior" = "Complementos de perímetro: tiradores y defensores baratos (mirar C4)",
+            "D · Rotación interior" = "Suplentes de pintura: reboteadores de rotación, contratos cortos")
+
+ejemplos22 <- base %>% filter(temporada == 2022) %>%
+  group_by(zona) %>% arrange(desc(C1), .by_group = TRUE) %>%
+  summarise(Ejemplos = paste(head(jugador, 3), collapse = ", "), .groups = "drop")
+
+base %>%
+  group_by(zona) %>%
+  summarise(`Casos 1982-2022` = n(), `Casos 2022` = sum(temporada == 2022),
+            `De los 10 % más valiosos` = sum(top), .groups = "drop") %>%
+  left_join(ejemplos22, by = "zona") %>%
+  mutate(`Acción sugerida` = accion[zona]) %>%
+  rename(Zona = zona, `Ejemplos 2022 (mayor C1)` = Ejemplos) %>%
+  kable(caption = paste0("Casos por zona. «10 % más valiosos» = los ", num(k_top), " de mayor VORP"))
+
+z <- table(base$zona); z22 <- table(base$zona[base$temporada == 2022])
+top_ejes <- sum(base$top & base$C1 >= c1_corte)
+```
+
+```{r mover-corte}
+tibble(`Corte en C1 (en desviaciones)` = c(0, 0.5, 1, 1.5, 2)) %>%
+  mutate(corte = `Corte en C1 (en desviaciones)` * sd(base$C1),
+         `Casos a la derecha (ejes)` = sapply(corte, function(c) sum(base$C1 >= c)),
+         `De los 10 % más valiosos` = sapply(corte, function(c) sum(base$top & base$C1 >= c)),
+         `% de la lista que son de los más valiosos` =
+           round(100 * `De los 10 % más valiosos` / `Casos a la derecha (ejes)`),
+         `Corte en C1 (en desviaciones)` = dec(`Corte en C1 (en desviaciones)`, 1)) %>%
+  select(-corte) %>%
+  kable(caption = "Sensibilidad de la lista de ejes al corte vertical")
+```
+
+**Interpretación.** Con los dos cortes, `r num(z[["A · Ejes exteriores"]] + z[["B · Ejes interiores"]])`
+jugadores-temporada quedan del lado de los ejes (`r z22[["A · Ejes exteriores"]] + z22[["B · Ejes interiores"]]`
+en 2022), y entre ellos están `r num(top_ejes)` de los `r num(k_top)` más valiosos según el VORP. En
+2022 la zona B la encabezan Jokić, Antetokounmpo y Embiid, los tres finalistas al MVP: a diferencia
+del taller anterior, donde el número único dejaba escapar a Jokić, el eje de valor de la base
+completa sí lo identifica. En la zona D aparecen novatos como Scottie Barnes y Evan Mobley,
+interiores de rotación en ese momento y posibles ejes a futuro.
+
+La tabla de sensibilidad muestra la disyuntiva de cualquier regla de corte: al subir el umbral en C1
+la lista se acorta y aumenta su **precisión** (mayor proporción de jugadores valiosos), pero baja su
+**exhaustividad** (se escapan más jugadores valiosos). El corte en C2, en cambio, no ordena por
+valor; reparte la lista según el tipo de pieza. Para 2023, la recomendación es revisar a fondo a los
+jugadores de 2022 en las zonas A y B (con C3 para descartar estadísticas infladas por el contexto) y
+buscar complementos en C y D usando las variables que C1 no ve (sección 10). Conviene insistir en que
+las zonas son una **regla de trabajo**: el mapa no encontró cuatro tipos de jugador.
+
+# 12. Análisis de sensibilidad: ¿influyó el relleno de `porc_triple`?
+
+```{r sensibilidad}
+# PCA sin las filas en que porc_triple estaba vacío
+completo <- !base$sin_triple
+pca_sin <- prcomp(X[completo, ], scale. = TRUE)
+parecido <- sapply(1:4, function(j) abs(cor(pca$rotation[, j], pca_sin$rotation[, j])))
+info_sin <- pca_sin$sdev^2 / sum(pca_sin$sdev^2)
+
+tibble(Componente = nombres_comp,
+       `Similitud de los pesos (|r|)` = dec(parecido, 3),
+       `% varianza · con relleno` = pct(info[1:4]),
+       `% varianza · sin esas filas` = pct(info_sin[1:4])) %>%
+  kable(caption = paste0("PCA con las ", num(n), " filas frente a PCA sin las ", num(n_sin_triple), " filas sin % de triple"))
+```
+
+Los vectores de pesos de las cuatro componentes son prácticamente idénticos en ambos análisis
+(similitud mínima de `r dec(min(parecido), 3)`) y la varianza de cada componente cambia en décimas
+de punto porcentual. El resultado es **robusto** a la imputación: rellenar con 0 no alteró la
+estructura encontrada. Es lo esperable, porque las filas afectadas son el
+`r pct(n_sin_triple / n)` % de la base y `porc_triple` es solo una de las `r p` variables activas.
+
+# 13. Alcances y limitaciones
+
+- **No establece causalidad.** Que C1 agrupe puntos, minutos y VORP no significa que anotar *cause*
+  valor; significa que esas variables covarían. Una parte de C1 es pura acumulación: quien juega
+  más minutos acumula más de todo.
+- **Los nombres son interpretaciones.** «Volumen y valor» o «interior ↔ exterior» son lecturas
+  nuestras de las cargas, no resultados de la técnica.
+- **No sustituye a las variables originales.** Es un resumen para ordenar y para cuantificar lo que
+  se pierde. Las variables mal representadas (sección 6) siguen siendo necesarias.
+- **Depende del diseño de la base.** La varianza de cada componente refleja cuántas columnas
+  redundantes la alimentan (sección 9). Añadir o quitar variables de un bloque cambia su peso
+  relativo.
+- **Solo capta relaciones lineales.** Variables con distribuciones muy asimétricas o concentradas en
+  pocos casos, como los votos al MVP, quedan mal descritas por correlaciones.
+- **Mezcla épocas.** El mapa combina 41 temporadas en una liga que se desplazó hacia el triple; las
+  comparaciones para el mercado actual deben restringirse a temporadas recientes.
+- **Más columnas no es más información.** Pasar de 10 a `r p` variables activas, y de un conjunto
+  elegido a las `r p_total` columnas del archivo, no multiplicó lo que se sabe en la misma
+  proporción: muchas de las nuevas columnas son sumas o copias de otras.
+
+# Conclusiones
+
+- **Las `r p_total` columnas no son `r p_total` aspectos distintos del juego.** Cuatro son
+  identificadores o variables de contexto que no pueden o no deben construir los ejes; de las
+  `r p` variables activas, `r sum(lambda < 0.001)` son combinaciones lineales exactas de otras, y
+  bloques enteros se mueven juntos. Una componente recoge el `r pct(info[1])` % de la varianza,
+  cuatro el `r pct(sum(info[1:4]))` % y `r k_80` superan el 80 %.
+- **Las cuatro componentes interpretadas tienen un significado claro:** **volumen y valor** (cuánto
+  pesa el jugador), **interior ↔ exterior** (dónde juega), **equipo ganador y eficiencia** (si su
+  producción se traduce en victorias) y **defensa activa ↔ tiro eficiente** (cómo contribuye).
+- **Las variables suplementarias validan y matizan el resultado.** La posición se ordena sobre C2
+  sin haber intervenido en su construcción, y la temporada muestra que la liga se desplazó hacia el
+  triple, lo que obliga a comparar dentro de épocas parecidas.
+- **El PCA de la base completa confirma los talleres anteriores:** reaparecen el eje interior y el de
+  protagonismo, aunque en distinto orden, por el peso que la base completa da al volumen.
+- **El costo de un índice único es concreto y medible:** C1 identifica a las estrellas, pero deja
+  fuera a la mayoría de reboteadores, creadores, defensores y tiradores eficientes, cuya información
+  está en otras componentes.
+- **Recomendación:** usar C1 para ordenar el mercado, C2 para identificar el tipo de pieza, C3 y C4
+  para desempatar, y revisar aparte las variables que el resumen no recoge (edad, partidos jugados,
+  % de libres). Con dos cortes en el mapa, la lista de 2022 se reparte en cuatro zonas, cada una con
+  una acción distinta.
