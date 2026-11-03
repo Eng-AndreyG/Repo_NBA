@@ -1,0 +1,401 @@
+---
+title: "Actividad: análisis factorial y rotación · NBA"
+subtitle: "Estadística Multidimensional - 26158 · grupo 020-81"
+author:
+  - "Andrey Camilo Gonzalez Caceres · 20231020070"
+  - "Julian David Pulido Carreño · 20231020064"
+  - "David Martínez Rincón · 20222020167"
+date: "`r paste(as.integer(format(Sys.Date(), '%d')), 'de', c('enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre')[as.integer(format(Sys.Date(), '%m'))], 'de', format(Sys.Date(), '%Y'))`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: false
+    theme: flatly
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 9, fig.height = 5.5, fig.align = "center")
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggrepel)
+library(knitr)
+library(psych)
+library(GPArotation)
+
+theme_set(theme_minimal(base_size = 12))
+
+dec <- function(x, d = 2) format(round(x, d), nsmall = d, decimal.mark = ",")
+pct <- function(x, d = 0) format(round(100 * x, d), nsmall = d, decimal.mark = ",")
+num <- function(x) format(x, big.mark = ".", decimal.mark = ",")
+```
+
+# El encargo
+
+En los talleres anteriores el GM de la franquicia aceptó que el perfil de un jugador no cabe en un
+solo número. Ahora pregunta lo mismo que el jefe de selección de la clase:
+
+> *«Tengo dos tipos de cupo en la plantilla. ¿Me pueden sacar dos habilidades con nombre para buscar
+> jugadores para cada uno?»*
+
+Para responderle hacemos los cinco pasos de la actividad con nuestra base.
+
+```{r datos}
+# Misma base y mismas 10 variables del taller de componentes principales:
+# temporadas 2015-2022, al menos 500 minutos, filas TOT incluidas
+# (en esta base el jugador traspasado solo aparece en su fila TOT).
+nba <- read.csv("NBA_espanol.csv", fileEncoding = "UTF-8")
+
+base <- nba %>%
+  filter(temporada >= 2015, minutos_totales >= 500) %>%
+  mutate(posicion = sub("-.*", "", posicion))
+
+vars <- c("minutos_pp", "porc_uso_jugador", "porc_tiro_verdadero",
+          "porc_intentos_triple", "razon_libres_intentos",
+          "porc_asistencias_equipo", "porc_rebotes_of_disp",
+          "porc_rebotes_def_disp", "porc_tapones_equipo", "porc_robos_equipo")
+
+etiqueta <- c(minutos_pp = "Minutos/partido", porc_uso_jugador = "Uso (USG%)",
+              porc_tiro_verdadero = "Eficiencia (TS%)", porc_intentos_triple = "% tiros de triple",
+              razon_libres_intentos = "Ataque al aro (FTr)", porc_asistencias_equipo = "Asistencias (AST%)",
+              porc_rebotes_of_disp = "Rebote of. (ORB%)", porc_rebotes_def_disp = "Rebote def. (DRB%)",
+              porc_tapones_equipo = "Tapones (BLK%)", porc_robos_equipo = "Robos (STL%)")
+
+base <- base %>% filter(if_all(all_of(vars), ~ !is.na(.x)))
+X <- base[, vars]
+n <- nrow(X); p <- length(vars)
+```
+
+Trabajamos con `r num(n)` jugadores-temporada de 2015 a 2022 con al menos 500 minutos, y las mismas
+`r p` variables de perfil del taller de componentes principales. No usamos las 48 variables del PCA
+completo porque varias son sumas exactas de otras (puntos, rebotes totales, Win Shares...). Con eso
+la matriz de correlaciones queda singular y el método de máxima verosimilitud no tiene cómo
+estimarse.
+
+```{r ordenar}
+# fa() no siempre entrega las habilidades en el mismo orden ni con el mismo signo.
+# Para comparar entre métodos dejamos siempre:
+#   columna 1 = la habilidad donde más carga el rebote ofensivo (con signo +)
+#   columna 2 = la habilidad donde más carga el uso (con signo +)
+ordenar <- function(f) {
+  L <- unclass(f$loadings)
+  i1 <- which.max(abs(L["porc_rebotes_of_disp", ]))
+  i2 <- setdiff(seq_len(ncol(L)), i1)[which.max(abs(L["porc_uso_jugador", -i1]))]
+  orden <- c(i1, i2, setdiff(seq_len(ncol(L)), c(i1, i2)))
+  L <- L[, orden, drop = FALSE]
+  s <- sign(c(L["porc_rebotes_of_disp", 1], L["porc_uso_jugador", 2],
+              if (ncol(L) > 2) L["porc_tiro_verdadero", 3:ncol(L)]))
+  L <- sweep(L, 2, s, `*`)
+  phi <- if (is.null(f$Phi)) diag(ncol(L)) else f$Phi[orden, orden] * outer(s, s)
+  sc <- if (is.null(f$scores)) NULL else sweep(f$scores[, orden, drop = FALSE], 2, s, `*`)
+  list(L = L, phi = phi, scores = sc)
+}
+```
+
+# 1. Dos habilidades sin girar
+
+```{r sin-girar}
+f_sin <- fa(X, nfactors = 2, fm = "ml", rotate = "none")
+o_sin <- ordenar(f_sin)
+
+data.frame(Variable = etiqueta[vars], H1 = dec(o_sin$L[, 1]), H2 = dec(o_sin$L[, 2]),
+           row.names = NULL) %>%
+  kable(caption = "Cargas de las dos habilidades sin girar (máxima verosimilitud)")
+```
+
+**Describir.** Sin girar, la primera habilidad ya se parece a algo conocido: mandan el rebote
+ofensivo (`r dec(o_sin$L["porc_rebotes_of_disp", 1])`), el defensivo
+(`r dec(o_sin$L["porc_rebotes_def_disp", 1])`) y los tapones (`r dec(o_sin$L["porc_tapones_equipo", 1])`),
+y en contra el % de triples (`r dec(o_sin$L["porc_intentos_triple", 1])`). La segunda la llevan el uso
+(`r dec(o_sin$L["porc_uso_jugador", 2])`), las asistencias (`r dec(o_sin$L["porc_asistencias_equipo", 2])`)
+y los minutos (`r dec(o_sin$L["minutos_pp", 2])`).
+
+**Analizar.** A diferencia del ejemplo de clase, aquí no hay una primera habilidad que cargue en todo.
+Pero quedan cruces que ensucian los nombres: las asistencias cargan
+`r dec(o_sin$L["porc_asistencias_equipo", 1])` en la primera y el ataque al aro
+`r dec(o_sin$L["razon_libres_intentos", 2])` en la segunda. **Decisión:** girar, para ver si esos
+cruces se limpian.
+
+# 2. Girar de las dos maneras
+
+```{r girar}
+f_ind <- fa(X, nfactors = 2, fm = "ml", rotate = "varimax")
+f_jun <- fa(X, nfactors = 2, fm = "ml", rotate = "oblimin")
+o_ind <- ordenar(f_ind); o_jun <- ordenar(f_jun)
+
+data.frame(Variable = etiqueta[vars],
+           `Varimax H1` = dec(o_ind$L[, 1]), `Varimax H2` = dec(o_ind$L[, 2]),
+           `Oblimin H1` = dec(o_jun$L[, 1]), `Oblimin H2` = dec(o_jun$L[, 2]),
+           check.names = FALSE, row.names = NULL) %>%
+  kable(caption = "Cargas con los dos giros")
+```
+
+```{r plano, fig.height = 5.5}
+plano <- bind_rows(
+  data.frame(giro = "Sin girar", var = vars, h1 = o_sin$L[, 1], h2 = o_sin$L[, 2]),
+  data.frame(giro = "Girada con oblimin", var = vars, h1 = o_jun$L[, 1], h2 = o_jun$L[, 2])) %>%
+  mutate(giro = factor(giro, levels = c("Sin girar", "Girada con oblimin")),
+         etiqueta = etiqueta[var])
+
+ggplot(plano, aes(h1, h2)) +
+  geom_hline(yintercept = 0, color = "grey60") +
+  geom_vline(xintercept = 0, color = "grey60") +
+  geom_segment(aes(x = 0, y = 0, xend = h1, yend = h2), color = "#2166ac",
+               arrow = arrow(length = unit(0.18, "cm"))) +
+  geom_label_repel(aes(label = etiqueta), size = 3, seed = 1, min.segment.length = 0,
+                   fill = "white", label.size = 0, box.padding = 0.35) +
+  facet_wrap(~ giro) +
+  coord_equal(xlim = c(-1, 1.1), ylim = c(-0.6, 1)) +
+  labs(title = "Las mismas 10 variables vistas desde dos pares de ejes",
+       x = "Habilidad 1", y = "Habilidad 2")
+```
+
+Ahora comprobamos que la parte común de cada variable no cambia con el giro:
+
+```{r comunalidad}
+comun <- rbind(`Sin girar` = f_sin$communality,
+               Varimax     = f_ind$communality,
+               Oblimin     = f_jun$communality)
+colnames(comun) <- etiqueta[vars]
+t(round(100 * comun, 1)) %>% kable(caption = "Parte común de cada variable (de cada 100)")
+
+# Ojo: sumar las cargas al cuadrado solo da la parte común si las habilidades son independientes
+suma_cuadrados <- rbind(Varimax = rowSums(o_ind$L^2), Oblimin = rowSums(o_jun$L^2))
+dif_varimax <- max(abs(suma_cuadrados["Varimax", ] - f_sin$communality))
+dif_oblimin <- max(abs(suma_cuadrados["Oblimin", ] - f_sin$communality))
+```
+
+**Describir.** La parte común es la misma con los tres: el rebote ofensivo queda en
+`r pct(f_sin$communality["porc_rebotes_of_disp"], 1)` de cada 100 y los robos en
+`r pct(f_sin$communality["porc_robos_equipo"], 1)`, las tres veces. Y con los dos giros cada
+variable queda cargando sobre todo en una sola habilidad.
+
+**Analizar.** Hay un detalle que no sale en las notas. Si uno calcula la parte común a mano sumando las
+cargas al cuadrado, con varimax cuadra (la diferencia es `r if (dif_varimax < 1e-6) "prácticamente cero" else dec(dif_varimax, 4)`),
+pero con oblimin no (diferencia de hasta `r dec(dif_oblimin, 3)`). Con oblimin las habilidades pueden
+ir juntas y la parte común también depende de esa correlación; por eso hay que leerla de
+`f$communality` y no sumando cuadrados. **Decisión:** el giro no cambió lo que explica el modelo,
+así que podemos girar sin problema y juzgar solo si se puede nombrar.
+
+**Los nombres.** Con las dos rotaciones salen las mismas dos habilidades:
+
+- **H1 · Juego interior.** Rebote ofensivo `r dec(o_jun$L["porc_rebotes_of_disp", 1])`, defensivo
+  `r dec(o_jun$L["porc_rebotes_def_disp", 1])`, tapones `r dec(o_jun$L["porc_tapones_equipo", 1])`
+  y ataque al aro `r dec(o_jun$L["razon_libres_intentos", 1])`, contra el % de triples
+  (`r dec(o_jun$L["porc_intentos_triple", 1])`).
+- **H2 · Protagonismo.** Uso `r dec(o_jun$L["porc_uso_jugador", 2])`, asistencias
+  `r dec(o_jun$L["porc_asistencias_equipo", 2])` y minutos `r dec(o_jun$L["minutos_pp", 2])`.
+
+Son los mismos dos ejes que salieron en el PCA, ahora con otra técnica. El nombre lo ponemos nosotros
+viendo qué variables mandan; no quiere decir que el modelo demuestre que exista una habilidad
+"interior" dentro de cada jugador.
+
+# 3. ¿Cuánto van juntas?
+
+```{r phi}
+phi_ml <- o_jun$phi[1, 2]
+```
+
+**Describir.** Con el giro que permite que vayan juntas, las dos habilidades tienen una correlación de
+**`r dec(phi_ml)`**. En el ejemplo de clase era 0,79.
+
+**Analizar.** Prácticamente no van juntas: saber qué tan interior es un jugador no dice casi nada de
+cuánto protagonismo tiene. Por eso varimax y oblimin dan casi lo mismo; oblimin tenía permiso para
+juntarlas y no lo usó. **Decisión:** para el GM son dos cosas distintas, y dos cupos pensados con
+ellas buscarían jugadores distintos (lo contamos en el punto 6).
+
+# 4. ¿Se mantiene con otro método?
+
+```{r estabilidad}
+f_mr <- fa(X, nfactors = 2, fm = "minres", rotate = "oblimin")
+o_mr <- ordenar(f_mr)
+
+data.frame(Variable = etiqueta[vars],
+           `ML H1` = dec(o_jun$L[, 1]), `minres H1` = dec(o_mr$L[, 1]),
+           `ML H2` = dec(o_jun$L[, 2]), `minres H2` = dec(o_mr$L[, 2]),
+           check.names = FALSE, row.names = NULL) %>%
+  kable(caption = "Cargas con oblimin según el método de cálculo")
+
+cong_metodo <- diag(factor.congruence(o_jun$L, o_mr$L))
+```
+
+Además de cambiar el método, partimos la base en dos mitades al azar y sacamos las habilidades en cada
+una. Si la separación es real, las dos mitades deberían dar lo mismo.
+
+```{r mitades}
+set.seed(2026)
+mitad <- sample(c(TRUE, FALSE), n, replace = TRUE)
+o_a <- ordenar(fa(X[mitad, ], nfactors = 2, fm = "ml", rotate = "oblimin"))
+o_b <- ordenar(fa(X[!mitad, ], nfactors = 2, fm = "ml", rotate = "oblimin"))
+cong_mitades <- diag(factor.congruence(o_a$L, o_b$L))
+
+tibble(Prueba = c("ML contra minres (base completa)", "Mitad A contra mitad B (ML)"),
+       `Parecido H1` = dec(c(cong_metodo[1], cong_mitades[1]), 3),
+       `Parecido H2` = dec(c(cong_metodo[2], cong_mitades[2]), 3),
+       `Correlación entre H1 y H2` = c(paste(dec(phi_ml), "y", dec(o_mr$phi[1, 2])),
+                                       paste(dec(o_a$phi[1, 2]), "y", dec(o_b$phi[1, 2])))) %>%
+  kable(caption = "Estabilidad de las dos habilidades (parecido = coeficiente de congruencia, 1 es idéntico)")
+```
+
+**Describir.** Con minres las cargas cambian en el segundo decimal y el parecido entre soluciones es de
+`r dec(cong_metodo[1], 3)` y `r dec(cong_metodo[2], 3)`. Entre las dos mitades de la base pasa lo
+mismo: `r dec(cong_mitades[1], 3)` y `r dec(cong_mitades[2], 3)`. La correlación entre las dos
+habilidades se queda cerca de cero en todos los casos.
+
+**Analizar.** Aquí está la diferencia más grande con el ejemplo de clase. Allá la segunda habilidad
+cambiaba de forma con el método; acá no se mueve. Un coeficiente de congruencia por encima de 0,95
+se suele leer como "la misma habilidad". **Decisión:** la separación es estable y los dos nombres se
+pueden sostener.
+
+# 5. ¿Cuántas habilidades caben?
+
+$$\text{grados de libertad} = \frac{(p - k)^2 - (p + k)}{2}, \qquad p = `r p`$$
+
+```{r cuantas}
+gl <- tibble(Habilidades = 1:7) %>%
+  mutate(`Correlaciones a explicar` = p * (p - 1) / 2,
+         `Grados de libertad` = ((p - Habilidades)^2 - (p + Habilidades)) / 2)
+kable(gl, caption = paste("Grados de libertad según el número de habilidades, con", p, "variables"))
+k_max <- max(gl$Habilidades[gl$`Grados de libertad` > 0])
+k_cero <- gl$Habilidades[gl$`Grados de libertad` == 0]
+```
+
+**Describir.** Con `r p` variables hay `r p * (p - 1) / 2` correlaciones. Hasta `r k_max` habilidades
+quedan grados de libertad positivos; con `r k_cero` dan exactamente cero y con más dan negativo.
+
+**Analizar.** Con cero grados de libertad el modelo se ajusta, pero ya no hay nada que lo ponga a
+prueba. Por eso el máximo que se puede **comprobar** es `r k_max`. Tenemos más espacio que en el ejemplo
+de clase (allá eran 5 módulos y solo cabían 2). **Decisión:** que quepan no quiere decir que
+sirvan; hay que mirar si se pueden nombrar.
+
+```{r paralelo}
+set.seed(26)
+paralelo <- fa.parallel(X, fm = "ml", fa = "fa", plot = FALSE)
+k_par <- paralelo$nfact
+```
+
+La regla automática (análisis paralelo) sugiere `r k_par` habilidades, que sí caben. Probamos esa
+solución:
+
+```{r tres}
+f3 <- fa(X, nfactors = k_par, fm = "ml", rotate = "oblimin")
+o3 <- ordenar(f3)
+colnames(o3$L) <- paste0("H", 1:k_par)
+data.frame(Variable = etiqueta[vars], apply(o3$L, 2, dec), check.names = FALSE, row.names = NULL) %>%
+  kable(caption = paste("Cargas con", k_par, "habilidades (ML, oblimin)"))
+max3 <- max(abs(o3$L[, 3]))
+```
+
+**Describir.** Con `r k_par` habilidades, las dos primeras se mantienen. La tercera la llevan la
+eficiencia (TS% `r dec(o3$L["porc_tiro_verdadero", 3])`), y en contra las asistencias
+(`r dec(o3$L["porc_asistencias_equipo", 3])`) y los robos (`r dec(o3$L["porc_robos_equipo", 3])`).
+Ninguna carga pasa de `r dec(max3)`.
+
+**Analizar.** La tercera se parece a la C3 del PCA completo (eficiencia frente a jugador que
+reparte y roba), pero con cargas tan bajas el nombre queda débil. **Decisión:** para el GM nos
+quedamos con dos habilidades y la tercera la dejamos como pista, no como perfil.
+
+# 6. El costo para el GM
+
+Si el GM arma dos cupos, uno con el 20 % más alto en juego interior y otro con el 20 % más alto en
+protagonismo, ¿escoge a la misma gente, como pasaba en el ejemplo de clase?
+
+```{r costo}
+f_pun <- fa(X, nfactors = 2, fm = "ml", rotate = "oblimin", scores = "regression")
+H <- ordenar(f_pun)$scores
+alto <- function(v) v >= quantile(v, 0.80)
+cupo_int <- alto(H[, 1]); cupo_pro <- alto(H[, 2])
+en_los_dos <- sum(cupo_int & cupo_pro)
+por_azar <- sum(cupo_int) * 0.20
+r_puntajes <- cor(H[, 1], H[, 2])
+
+tibble(`Cupo interior` = sum(cupo_int), `Cupo protagonismo` = sum(cupo_pro),
+       `En los dos` = en_los_dos,
+       `De cada 100 del cupo interior` = round(100 * en_los_dos / sum(cupo_int)),
+       `Si fuera al azar` = round(por_azar)) %>%
+  kable(caption = "Jugadores-temporada escogidos por cada cupo")
+```
+
+```{r grafico-costo, fig.height = 3.4}
+data.frame(grupo = c("Solo cupo interior", "En los dos", "Solo cupo protagonismo"),
+           n = c(sum(cupo_int & !cupo_pro), en_los_dos, sum(cupo_pro & !cupo_int))) %>%
+  mutate(grupo = factor(grupo, levels = grupo)) %>%
+  ggplot(aes(n, "", fill = grupo)) +
+  geom_col(width = 0.5, position = position_stack(reverse = TRUE)) +
+  geom_text(aes(label = num(n)), position = position_stack(vjust = 0.5, reverse = TRUE),
+            color = "white", fontface = "bold", size = 4.5) +
+  scale_fill_manual(values = c("#2166ac", "#6b7280", "#d95f02"), name = NULL) +
+  labs(title = "Dos cupos armados con las dos habilidades giradas",
+       x = "Jugadores-temporada", y = NULL) +
+  theme(legend.position = "top")
+```
+
+```{r ejemplos-2022}
+base %>%
+  mutate(interior = H[, 1], protagonismo = H[, 2], cupo_int, cupo_pro) %>%
+  filter(temporada == 2022, cupo_int | cupo_pro) %>%
+  mutate(cupo = case_when(cupo_int & cupo_pro ~ "Los dos",
+                          cupo_int ~ "Interior", TRUE ~ "Protagonismo")) %>%
+  group_by(cupo) %>%
+  arrange(desc(interior + protagonismo), .by_group = TRUE) %>%
+  summarise(Jugadores = n(), Ejemplos = paste(head(jugador, 4), collapse = ", "), .groups = "drop") %>%
+  rename(Cupo = cupo) %>%
+  kable(caption = "Temporada 2022: quién cae en cada cupo")
+```
+
+**Describir.** Cada cupo escoge `r num(sum(cupo_int))` jugadores-temporada y solo
+`r num(en_los_dos)` están en los dos: `r round(100 * en_los_dos / sum(cupo_int))` de cada 100. Es
+incluso menos de lo que daría el azar (unos `r round(por_azar)`), porque los dos puntajes van un
+poco en contra. En clase la coincidencia era de tres de cada cuatro.
+
+**Analizar.** Los dos cupos buscan gente distinta. Los pocos que están en los dos son interiores que
+además son ejes del equipo (el tipo Jokić o Embiid), que son escasos. La correlación entre los dos
+puntajes es de `r dec(r_puntajes)`. **Decisión:** al GM sí le sirve tener dos perfiles, porque cada
+uno le muestra jugadores que el otro no ve.
+
+# Conclusión para el GM
+
+- **Sí se pueden nombrar dos habilidades:** *juego interior* (rebote, tapones, ataque al aro, contra el
+  triple) y *protagonismo* (uso, asistencias, minutos). Salen igual con los dos giros, con los dos
+  métodos y en las dos mitades de la base.
+- **Casi no van juntas** (`r dec(phi_ml)`): los dos cupos escogen jugadores distintos, solo
+  `r round(100 * en_los_dos / sum(cupo_int))` de cada 100 se repiten.
+- **Con `r p` variables caben hasta `r k_max` habilidades comprobables.** La regla automática sugiere
+  `r k_par`, pero la tercera tiene cargas flojas y no da para un perfil.
+- **Lo que no recogen:** la eficiencia (parte común de `r pct(f_sin$communality["porc_tiro_verdadero"])`
+  de cada 100) y los robos (`r pct(f_sin$communality["porc_robos_equipo"])`) casi no dependen de
+  ninguna de las dos habilidades. Antes de firmar a alguien hay que mirarlos aparte.
+- **La decisión:** dos cupos, uno por cada habilidad, y la eficiencia y la defensa como requisitos
+  aparte. Es lo contrario de lo que pasó con la prueba Saber, y está bien: el resultado depende de los
+  datos, no de lo que pida el cliente.
+
+# Preguntas conceptuales
+
+**1. Si girar no cambia la parte común, ¿para qué se gira?** Para poder nombrar. El giro no cambia lo que
+el modelo explica, solo busca los ejes desde donde cada variable cae en una sola habilidad. En
+nuestro caso limpió los cruces de las asistencias y del ataque al aro.
+
+**2. ¿Por qué en personas conviene el giro que deja ir juntas a las habilidades?** Porque en personas casi
+siempre van juntas (quien razona bien suele leer bien), y obligarlas a ser independientes es imponer
+algo que los datos no dicen. Si de verdad son independientes, oblimin lo muestra solo, como nos pasó
+con `r dec(phi_ml)`.
+
+**3. Dos habilidades van juntas 0,79. ¿Qué significa para quien quiere usarlas como dos perfiles?** Que
+los dos perfiles van a escoger casi a la misma gente. Pagaría dos procesos para obtener casi la misma
+lista.
+
+**4. ¿Por qué una habilidad que cambia según el método no se puede nombrar?** Porque el nombre tendría que
+describir algo de los jugadores, no del cálculo. Si cambia al cambiar el método, lo que estamos
+viendo es un acomodo de los números.
+
+**5. Un equipo tiene 4 variables y quiere sacar 3 habilidades. ¿Qué le dice?** Que no se puede. Con $p = 4$
+y $k = 3$ los grados de libertad dan $\frac{(4-3)^2 - (4+3)}{2} = -3$. Con 4 variables solo cabe una
+habilidad que se pueda comprobar (con dos ya dan $-1$).
+
+**6. ¿Cuál afirmación es correcta?** La **(b)**: girar cambia los ejes, no las variables, y la parte
+común de cada una queda igual. La (a) es falsa porque el giro no aumenta lo que se explica; la (c)
+porque con 5 módulos caben como mucho 2; la (d) porque que el giro produzca dos habilidades no
+quiere decir que sean estables ni distintas, como se vio en clase.
