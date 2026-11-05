@@ -1,0 +1,898 @@
+---
+title: "Resumen y dimensiones para el General Manager · NBA"
+subtitle: "Taller de Componentes Principales y Análisis Factorial · Estadística Multidimensional - 26158 · grupo 020-81"
+author:
+  - "Andrey Camilo Gonzalez Caceres · 20231020070"
+  - "Julian David Pulido Carreño · 20231020064"
+  - "David Martínez Rincón · 20222020167"
+date: "`r paste(as.integer(format(Sys.Date(), '%d')), 'de', c('enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre')[as.integer(format(Sys.Date(), '%m'))], 'de', format(Sys.Date(), '%Y'))`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    number_sections: false
+    theme: flatly
+    code_folding: hide
+    mathjax: null
+---
+
+<style>
+.recuadro {
+  border: 2px solid #2a78d6;
+  border-radius: 6px;
+  background: #f4f8fd;
+  padding: 16px 22px;
+  margin: 28px 0;
+}
+.recuadro h3 { margin-top: 0; }
+.formula {
+  background: #f0efec;
+  border-radius: 4px;
+  padding: 10px 16px;
+  font-family: monospace;
+  margin: 12px 0;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 9, fig.height = 5.5, fig.align = "center")
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggrepel)
+library(knitr)
+library(psych)
+library(GPArotation)
+
+azul <- "#2a78d6"; naranja <- "#eb6834"; gris <- "#b9b8b2"; tinta <- "#2b2b2a"; neutro <- "#f0efec"
+
+theme_set(theme_minimal(base_size = 13) +
+            theme(plot.title.position = "plot",
+                  plot.title = element_text(face = "bold", color = tinta),
+                  plot.subtitle = element_text(color = "#52514e"),
+                  panel.grid.minor = element_blank(),
+                  panel.grid.major = element_line(color = "#ecebe7"),
+                  legend.position = "top"))
+
+# Números con coma decimal
+dec <- function(x, d = 2) formatC(ifelse(abs(x) < 0.5 * 10^-d, 0, x), format = "f", digits = d, decimal.mark = ",")
+pct <- function(x, d = 1) dec(100 * x, d)
+ejes <- function(x) dec(x, 1)
+num <- function(x) formatC(x, format = "d", big.mark = ".", decimal.mark = ",")
+
+col_pos <- c(PG = "#2a78d6", SG = "#eb6834", SF = "#1baf7a", PF = "#eda100", C = "#e87ba4")
+nombres_pos <- c(PG = "Base (PG)", SG = "Escolta (SG)", SF = "Alero (SF)",
+                 PF = "Ala-pívot (PF)", C = "Pívot (C)")
+```
+
+# 1. El encargo
+
+Este informe es para usted, *General Manager* de una franquicia de la NBA. Acaba de terminar la temporada 2022 y tiene que decidir a quién fichar, a quién renovar y a quién dejar ir. Hoy compara a los candidatos con un tablero de 10 estadísticas: minutos por partido, uso, eficiencia de tiro (TS%), porcentaje de tiros de triple, ataque al aro (FTr), asistencias, rebote ofensivo, rebote defensivo, tapones y robos. Queremos averiguar si esas columnas se pueden resumir en uno o pocos números sin perder de vista a jugadores importantes, qué se pierde al hacerlo y si detrás del tablero hay dimensiones estables a las que se les pueda poner nombre.
+
+```{r variables}
+tibble(
+  Variable = c("Minutos/partido", "Uso (USG%)", "Eficiencia (TS%)", "% tiros de triple",
+               "Ataque al aro (FTr)", "Asistencias (AST%)", "Rebote ofensivo (ORB%)",
+               "Rebote defensivo (DRB%)", "Tapones (BLK%)", "Robos (STL%)"),
+  `Qué le dice al GM` = c("Confianza del cuerpo técnico y rol en la rotación",
+                          "Cuántas jugadas del equipo terminan en él",
+                          "Puntos por tiro, contando triples y libres",
+                          "Qué parte de sus tiros es de tres",
+                          "Tiros libres que lanza por cada tiro de campo",
+                          "Cuántas canastas de sus compañeros asiste",
+                          "Segundas oportunidades que recupera",
+                          "Posesiones del rival que cierra",
+                          "Tiros rivales que bloquea cerca del aro",
+                          "Posesiones rivales que recupera")) %>%
+  kable(caption = "Las 10 variables del tablero, las mismas en todo el documento")
+```
+
+Las escogimos porque no premian solo al que más jugó y porque cualquier posición puede destacar en alguna. El VORP (valor sobre un jugador de reemplazo) lo dejamos por fuera a propósito: ya es una medida de valor, así que en la sección 4 lo usamos para comprobar si un resumen ubica a los mejores jugadores.
+
+# 2. Los datos que entran
+
+El código de limpieza incluye lo que hicimos en el primer corte y lo que cambiamos después.
+
+```{r limpieza, class.source = "fold-show"}
+nba <- read.csv("NBA_espanol.csv", fileEncoding = "UTF-8")
+
+# Limpieza del primer corte (así se construyó nbaFINAL.csv): se reporta para dejar
+# constancia, porque este taller corrige una de sus decisiones.
+primer_corte <- nba %>%
+  select(-porc_votos_mvp) %>%
+  filter(minutos_totales >= 100,                  # quita tasas absurdas por pocos minutos
+         equipo != "TOT") %>%                     # decisión que se corrige abajo
+  mutate(posicion = sub("-.*", "", posicion))     # "SG-PF" -> "SG"
+
+# Las 10 variables de perfil de juego
+vars <- c("minutos_pp", "porc_uso_jugador", "porc_tiro_verdadero",
+          "porc_intentos_triple", "razon_libres_intentos",
+          "porc_asistencias_equipo", "porc_rebotes_of_disp",
+          "porc_rebotes_def_disp", "porc_tapones_equipo", "porc_robos_equipo")
+
+etiquetas <- c(minutos_pp = "Minutos/partido", porc_uso_jugador = "Uso (USG%)",
+               porc_tiro_verdadero = "Eficiencia (TS%)", porc_intentos_triple = "% triples",
+               razon_libres_intentos = "Ataque al aro (FTr)", porc_asistencias_equipo = "Asistencias (AST%)",
+               porc_rebotes_of_disp = "Rebote of. (ORB%)", porc_rebotes_def_disp = "Rebote def. (DRB%)",
+               porc_tapones_equipo = "Tapones (BLK%)", porc_robos_equipo = "Robos (STL%)")
+
+# Base de este taller: se parte del original, se conservan las filas TOT
+# (un jugador traspasado solo aparece en esa fila) y se endurece el filtro de minutos.
+base <- nba %>%
+  filter(temporada >= 2015,                      # era del triple
+         minutos_totales >= 500) %>%             # rol real: tasas estables
+  mutate(posicion = factor(sub("-.*", "", posicion),
+                           levels = c("PG", "SG", "SF", "PF", "C"))) %>%
+  filter(if_all(all_of(vars), ~ !is.na(.x)))     # información completa
+
+X <- base[, vars]
+n <- nrow(base)
+p <- length(vars)
+```
+
+```{r conteos}
+n_inicial    <- nrow(nba)
+n_completos  <- sum(complete.cases(nba[, vars]))
+n_incomp     <- n_inicial - n_completos
+incompletos  <- nba[!complete.cases(nba[, vars]), ]
+n_pre2015    <- sum(nba$temporada < 2015)
+n_desde2015  <- sum(nba$temporada >= 2015)
+n_pocos_min  <- sum(nba$temporada >= 2015 & nba$minutos_totales < 500)
+n_na_final   <- sum(nba$temporada >= 2015 & nba$minutos_totales >= 500 &
+                      !complete.cases(nba[, vars]))
+n_excluidos  <- n_inicial - n
+
+# Las cifras que se reportan
+c(casos_iniciales = n_inicial,
+  con_las_10_variables_completas = n_completos,
+  sin_informacion_completa = n_incomp,
+  analizados = n,
+  por_fuera = n_excluidos)
+
+tibble(Paso = c("Archivo original", "Temporadas anteriores a 2015",
+                "Menos de 500 minutos en la temporada (desde 2015)",
+                "Sin información completa en las 10 variables (tras los dos filtros)"),
+       `Casos que salen` = c("—", num(n_pre2015), num(n_pocos_min), num(n_na_final)),
+       `Casos que quedan` = num(c(n_inicial, n_desde2015, n_desde2015 - n_pocos_min, n)),
+       `Por qué` = c("Cada fila es un jugador en una temporada",
+                     "El juego era otro: la proporción de tiros de triple era muy distinta",
+                     "Las tasas calculadas con pocos minutos son inestables",
+                     "Los incompletos ya habían salido en los dos pasos anteriores")) %>%
+  kable(caption = "De dónde salen los jugadores-temporada que se analizan", align = "lrrl")
+
+triple_era <- nba %>% filter(minutos_totales >= 500) %>%
+  group_by(reciente = temporada >= 2015) %>%
+  summarise(triple = mean(porc_intentos_triple, na.rm = TRUE), .groups = "drop")
+ts_pocos <- nba %>% filter(temporada >= 2015, minutos_totales < 500)
+n_tot <- sum(base$equipo == "TOT")
+```
+
+El archivo trae `r num(n_inicial)` filas, cada una con un jugador en una temporada. De ellas, `r num(n_completos)` tienen las 10 variables completas. A las otras `r n_incomp` les falta información porque el jugador no lanzó ni un tiro en el año (el que más jugó sumó `r max(incompletos$minutos_totales)` minutos), y sin tiros no se puede calcular su eficiencia. Al final trabajamos con **`r num(n)` casos** y dejamos por fuera **`r num(n_excluidos)`**: `r num(n_pre2015)` son anteriores a 2015 y `r num(n_pocos_min)` tienen menos de 500 minutos. Los incompletos ya estaban en esos dos grupos (`r sum(incompletos$temporada < 2015)` por época y `r sum(incompletos$temporada >= 2015)` por minutos), así que no restan casos adicionales.
+
+Los dos filtros tienen una razón de juego. Antes de 2015, el `r pct(triple_era$triple[!triple_era$reciente], 0)` % de los tiros de estos jugadores era de triple; desde entonces es el `r pct(triple_era$triple[triple_era$reciente], 0)` %, y juntar ambas épocas mezclaría dos formas de jugar. Con menos de 500 minutos, las tasas se vuelven poco confiables: la desviación de la eficiencia es `r dec(sd(ts_pocos$porc_tiro_verdadero, na.rm = TRUE))`, contra `r dec(sd(base$porc_tiro_verdadero))` en la base final, y hay quien llega a `r dec(max(ts_pocos$porc_tiro_verdadero, na.rm = TRUE), 1)`. Por eso, estos resultados le sirven para comparar jugadores con minutos reales en la liga actual, pero no para juzgar otras épocas.
+
+Hay un cambio frente al primer corte. Allá quitamos las filas `TOT` (quedaban `r num(nrow(primer_corte))` casos, con un mínimo de 100 minutos) porque creíamos que duplicaban a los jugadores traspasados. Al revisar, vimos que desde 2015 no hay jugadores repetidos en una misma temporada (`r sum(duplicated(nba[nba$temporada >= 2015, c("temporada", "jugador")]))` duplicados), así que esa limpieza borraba a `r n_tot` traspasados, entre ellos James Harden y Domantas Sabonis en 2022. Aquí las dejamos.
+
+```{r excluidos-2022}
+ex22 <- nba %>% filter(temporada == 2022, minutos_totales < 500)
+n_filas22 <- sum(nba$temporada == 2022)
+
+ex22 %>% arrange(desc(puntos_pp)) %>% head(5) %>%
+  transmute(Jugador = jugador, Equipo = equipo, Partidos = partidos_jugados,
+            Minutos = minutos_totales, `Puntos/partido` = dec(puntos_pp, 1)) %>%
+  kable(caption = "Mercado 2022: cinco de los jugadores excluidos por minutos, los de más puntos por partido",
+        align = "llrrr")
+```
+
+El filtro de minutos pesa en el mercado de 2022: de `r n_filas22` filas salen `r nrow(ex22)` y quedan `r n_filas22 - nrow(ex22)`. Entre los que salen hay jugadores como Collin Sexton y Brook Lopez, que anotaron bastante en muy pocos partidos. Sobre ellos este documento no dice nada, ni bueno ni malo, porque su temporada no alcanza para calcular tasas estables. Si alguno le interesa, hay que evaluarlo aparte con su historial médico y sus temporadas anteriores.
+
+## ¿Debemos estandarizar?
+
+```{r desviaciones}
+unidades <- c("minutos", "% de jugadas", "proporción de 0 a 1", "proporción de 0 a 1", "razón",
+              "% de canastas", "% de rebotes", "% de rebotes", "% de tiros rivales", "% de posesiones")
+desv <- tibble(Variable = etiquetas[vars], Unidad = unidades, de = sapply(X, sd)) %>%
+  arrange(desc(de))
+desv %>% transmute(Variable, Unidad, `Desviación estándar` = dec(de, 3)) %>%
+  kable(caption = "Desviación estándar de cada variable, en su propia unidad", align = "llr")
+
+pca_crudo <- prcomp(X, scale. = FALSE)
+info_crudo <- pca_crudo$sdev^2 / sum(pca_crudo$sdev^2)
+peso_crudo <- sort(abs(pca_crudo$rotation[, 1]), decreasing = TRUE)
+```
+
+Las variables están en unidades muy distintas: minutos, porcentajes de 0 a 100, proporciones de 0 a 1 y una razón. La desviación de `r desv$Variable[1]` (`r dec(desv$de[1])`) es `r round(max(desv$de) / min(desv$de))` veces la de `r desv$Variable[p]` (`r dec(desv$de[p], 3)`), y buena parte de esa diferencia viene de la escala en que se mide cada una.
+
+Si no estandarizamos, el resumen sigue a las columnas con números más grandes. Lo probamos: la primera componente guarda `r pct(info_crudo[1])` de cada 100 partes de la información, pero `r etiquetas[names(peso_crudo)[1]]` se lleva un peso de `r dec(peso_crudo[1])` sobre un máximo de 1. Ese porcentaje tan alto dice más de las unidades que de los jugadores. Por eso **estandarizamos** con `prcomp(scale. = TRUE)`: cada variable queda con desviación 1, y eficiencia, robos y tapones entran con el mismo peso inicial que minutos o asistencias.
+
+# 3. ¿Se repiten? (Correlaciones)
+
+```{r correlaciones, fig.height = 6.5}
+R <- cor(X)
+Re <- R; dimnames(Re) <- list(etiquetas[vars], etiquetas[vars])
+orden <- hclust(as.dist(1 - abs(Re)))$order
+Rord <- Re[orden, orden]
+
+as.data.frame(as.table(Rord)) %>%
+  setNames(c("v1", "v2", "r")) %>%
+  ggplot(aes(v1, v2, fill = r)) +
+  geom_tile(color = "white", linewidth = 0.8) +
+  geom_text(aes(label = dec(r, 2)), size = 3.2, color = tinta) +
+  scale_fill_gradient2(low = naranja, mid = neutro, high = azul, limits = c(-1, 1),
+                       name = "Correlación", labels = function(x) dec(x, 1)) +
+  labs(title = "Qué tanto se mueven juntas las 10 columnas del tablero",
+       subtitle = "Ordenadas para que las que se parecen queden juntas\nAzul: suben juntas · naranja: una sube y la otra baja",
+       x = NULL, y = NULL) +
+  theme(axis.text.x = element_text(angle = 40, hjust = 1), panel.grid = element_blank())
+```
+
+```{r cifras-correlacion}
+Ru <- R; Ru[lower.tri(Ru, diag = TRUE)] <- NA
+pares <- as.data.frame(as.table(Ru)) %>% filter(!is.na(Freq)) %>%
+  setNames(c("v1", "v2", "r")) %>% arrange(desc(abs(r)))
+max_abs <- apply(abs(R) - diag(p), 1, max)
+sueltas <- sort(max_abs)
+```
+
+En la matriz se ven dos bloques. Rebote ofensivo, rebote defensivo y tapones van juntos (de `r dec(R["porc_rebotes_def_disp", "porc_tapones_equipo"])` a `r dec(R["porc_rebotes_of_disp", "porc_rebotes_def_disp"])`), con el ataque al aro cerca y el % de triples en contra (`r dec(R["porc_rebotes_of_disp", "porc_intentos_triple"])` con el rebote ofensivo). El otro bloque lo forman uso, asistencias y minutos (de `r dec(R["minutos_pp", "porc_asistencias_equipo"])` a `r dec(R["porc_uso_jugador", "porc_asistencias_equipo"])`). Las que van más solas son `r etiquetas[names(sueltas)[1]]`, cuya correlación más alta con otra columna es `r dec(sueltas[1])`, y `r etiquetas[names(sueltas)[2]]`, con `r dec(sueltas[2])`. Además, `r sum(abs(pares$r) < 0.3)` de los `r nrow(pares)` pares quedan por debajo de 0,3.
+
+Para usted, esto quiere decir que el tablero repite información. Rebote y tapones hablan en buena parte de dónde juega alguien; uso, asistencias y minutos, de cuánto pasa el juego por él. Aun así, ninguna correlación se acerca a 1, de modo que tampoco son columnas copiadas.
+
+Sí tiene sentido resumir, pero con más de un número, porque hay dos bloques. Eficiencia y robos conviene mirarlas por separado antes de firmar a alguien, ya que un resumen de lo que se repite las va a representar mal.
+
+# 4. El resumen (PCA)
+
+## 4.1 ¿Cuánta información conserva cada componente?
+
+```{r pca}
+pca <- prcomp(X, scale. = TRUE)
+
+# El signo de una componente es arbitrario. Se fija para que se lea fácil:
+# C1 positiva = más rebote ofensivo; C2 positiva = más minutos; C3 positiva = más TS%.
+ancla <- c("porc_rebotes_of_disp", "minutos_pp", "porc_tiro_verdadero")
+for (j in 1:3) {
+  if (pca$rotation[ancla[j], j] < 0) {
+    pca$rotation[, j] <- -pca$rotation[, j]
+    pca$x[, j]        <- -pca$x[, j]
+  }
+}
+base <- base %>% mutate(C1 = pca$x[, 1], C2 = pca$x[, 2], C3 = pca$x[, 3])
+
+info <- pca$sdev^2 / sum(pca$sdev^2)
+acum <- cumsum(info)
+k80  <- which(acum > 0.80)[1]
+```
+
+```{r scree, fig.height = 4.8}
+reparto <- tibble(comp = factor(paste0("C", 1:p), levels = paste0("C", 1:p)),
+                  info = 100 * info, acum = 100 * acum,
+                  conservada = rep(c("Componentes que conservamos", "Resto"), c(2, p - 2)))
+
+ggplot(reparto, aes(comp)) +
+  geom_col(aes(y = info, fill = conservada), width = 0.6) +
+  geom_line(aes(y = acum, group = 1), color = naranja, linewidth = 0.8) +
+  geom_point(aes(y = acum), color = naranja, size = 2.5) +
+  geom_text(data = reparto[-1, ], aes(y = info, label = dec(info, 1)), vjust = -0.5, size = 3.4, color = tinta) +
+  geom_text(data = reparto[1, ], aes(y = info, label = dec(info, 1)), vjust = 1.6, size = 3.4,
+            color = "white", fontface = "bold") +
+  geom_text(data = reparto[2:6, ], aes(y = acum, label = dec(acum, 1)), vjust = -0.9,
+            size = 3.4, color = tinta) +
+  annotate("text", x = 8.5, y = 88, label = "Línea: acumulado", size = 3.6, color = "#52514e") +
+  scale_fill_manual(values = c("Componentes que conservamos" = azul, "Resto" = gris), name = NULL) +
+  scale_y_continuous(limits = c(0, 108)) +
+  labs(title = "De cada 100 partes de información, cuántas guarda cada componente",
+       subtitle = "Barras: cada componente · línea: lo que se lleva acumulado",
+       x = NULL, y = "De cada 100")
+
+salen_plano <- 1 - rowSums(cor(X, pca$x[, 1:2])^2)
+```
+
+La primera componente guarda **`r pct(info[1])` de cada 100** partes de la información. Con la segunda se llega a **`r pct(acum[2])`**, con la tercera a `r pct(acum[3])`, y para pasar de 80 harían falta `r k80` (`r pct(acum[k80])`).
+
+Una componente es una suma con pesos de las 10 columnas. Lo que usted necesita saber de un jugador es qué tipo de pieza es y cuánto pasa el juego por él, y las dos primeras componentes responden justo eso, como se ve en 4.2. Llegar a 80 exigiría `r k80` números, la mitad de sus columnas, lo que ahorra poco. La tercera tampoco nos convence como número de trabajo: mezcla eficiencia y robos con signos contrarios, y un valor alto no permite saber cuál de las dos está viendo.
+
+Nos quedamos con **dos componentes** y, al lado, con **eficiencia y robos** tal como vienen en el tablero, que son más fáciles de leer. De las `r dec(sum(salen_plano))` unidades de información que el plano deja por fuera, esas dos columnas suman `r dec(salen_plano["porc_tiro_verdadero"] + salen_plano["porc_robos_equipo"])`. Aun así, el plano renuncia a `r pct(1 - acum[2])` de cada 100 partes, así que el mapa sirve para filtrar candidatos, no para decidir una firma por sí solo.
+
+## 4.2 ¿Qué representan las primeras componentes?
+
+```{r pesos, fig.height = 5.6}
+nombres_comp <- c(C1 = "C1 · Perímetro ↔ Juego interior",
+                  C2 = "C2 · Protagonismo",
+                  C3 = "C3 · Robo ↔ Eficiencia")
+
+as.data.frame(pca$rotation[, 1:3]) %>%
+  setNames(c("C1", "C2", "C3")) %>%
+  mutate(variable = etiquetas[vars]) %>%
+  pivot_longer(-variable, names_to = "comp", values_to = "peso") %>%
+  mutate(comp = nombres_comp[comp],
+         tipo = case_when(peso >= 0.3 ~ "Peso positivo grande",
+                          peso <= -0.3 ~ "Peso negativo grande",
+                          TRUE ~ "Peso pequeño (menos de 0,3)"),
+         variable = factor(variable, levels = etiquetas[vars][order(pca$rotation[, 1])])) %>%
+  ggplot(aes(peso, variable, fill = tipo)) +
+  geom_col(width = 0.65) +
+  geom_vline(xintercept = 0, color = "#8a8983") +
+  geom_text(aes(label = dec(peso, 2), hjust = ifelse(peso >= 0, -0.12, 1.12)), size = 3, color = tinta) +
+  facet_wrap(~ comp) +
+  scale_fill_manual(values = c("Peso positivo grande" = azul, "Peso negativo grande" = naranja,
+                               "Peso pequeño (menos de 0,3)" = gris), name = NULL) +
+  scale_x_continuous(limits = c(-0.95, 0.95), breaks = c(-0.5, 0, 0.5),
+                     labels = function(x) dec(x, 1)) +
+  labs(title = "Qué columnas mandan en cada una de las tres primeras componentes",
+       x = "Peso", y = NULL)
+
+w <- pca$rotation
+```
+
+Les pusimos nombre mirando qué columnas pesan más y en qué dirección:
+
+- **C1 · Perímetro ↔ Juego interior (`r pct(info[1])` de cada 100).** A un lado están rebote ofensivo (`r dec(w["porc_rebotes_of_disp", 1])`), rebote defensivo (`r dec(w["porc_rebotes_def_disp", 1])`), tapones (`r dec(w["porc_tapones_equipo", 1])`) y ataque al aro (`r dec(w["razon_libres_intentos", 1])`); al otro, el % de triples (`r dec(w["porc_intentos_triple", 1])`).
+- **C2 · Protagonismo (`r pct(info[2])` de cada 100).** Pesan uso (`r dec(w["porc_uso_jugador", 2])`), asistencias (`r dec(w["porc_asistencias_equipo", 2])`) y minutos (`r dec(w["minutos_pp", 2])`), los tres en la misma dirección.
+- **C3 · Robo ↔ Eficiencia (`r pct(info[3])` de cada 100).** Enfrenta robos (`r dec(w["porc_robos_equipo", 3])`) con eficiencia (`r dec(w["porc_tiro_verdadero", 3])`), que va acompañada de minutos y % de triples.
+
+Estos nombres son nuestros: describen columnas que se mueven juntas y no indican que el jugador tenga cierta aptitud. C1 ordena por dónde juega alguien, no por lo bueno que es. C2 muestra cuánto pasa el juego por él, aunque no si lo hace bien. C3 distingue un perfil de eficiencia de uno de robos, sin decir cuál vale más.
+
+En la práctica, C1 le sirve para ver qué tipo de pieza le falta a la plantilla y C2 para separar a los jugadores centrales de los de rotación. Ninguna de las dos funciona como nota del jugador.
+
+## 4.3 El costo de resumir
+
+Supongamos que usted decide solo con C1. Para medir el costo usamos el **Top 10 % en VORP**, una métrica que no entró al resumen: armamos con C1 una lista del mismo tamaño y contamos cuántos de ese Top 10 % aparecen.
+
+```{r costo-variables}
+r2 <- cor(X, pca$x[, 1:2])^2
+tibble(Variable = etiquetas[vars], `Con solo C1` = 100 * r2[, 1], `Con C1 y C2` = 100 * rowSums(r2)) %>%
+  arrange(desc(`Con solo C1`)) %>%
+  mutate(across(where(is.numeric), ~ dec(.x, 0))) %>%
+  kable(caption = "De cada 100 partes de cada columna, cuántas conserva el resumen", align = "lrr")
+```
+
+C1 conserva `r pct(r2["porc_rebotes_of_disp", 1], 0)` de cada 100 partes del rebote ofensivo, pero apenas `r pct(r2["porc_uso_jugador", 1], 0)` del uso, `r pct(r2["minutos_pp", 1], 0)` de los minutos y `r pct(r2["porc_robos_equipo", 1], 0)` de los robos. Es decir, con ese número usted sabría dónde juega cada uno, pero casi nada de cuánto juega o cuánto pasa el ataque por él. Al sumar C2 se recupera el protagonismo, aunque eficiencia y robos se quedan en `r pct(sum(r2["porc_tiro_verdadero", ]), 0)` y `r pct(sum(r2["porc_robos_equipo", ]), 0)` de cada 100. Si busca un creador de juego o un defensor de líneas de pase, C1 no le sirve como filtro.
+
+```{r costo-listas}
+lista <- function(s, k) rank(-s, ties.method = "first") <= k
+
+k <- round(0.10 * n)
+base <- base %>%
+  mutate(top = lista(valor_sobre_reemplazo, k), en_c1 = lista(C1, k), en_c2 = lista(C2, k))
+
+m22 <- base %>% filter(temporada == 2022)
+k22 <- round(0.10 * nrow(m22))
+m22 <- m22 %>%
+  mutate(top22 = lista(valor_sobre_reemplazo, k22), c1_22 = lista(C1, k22), c2_22 = lista(C2, k22),
+         rank_vorp = rank(-valor_sobre_reemplazo, ties.method = "first"),
+         rank_c1 = rank(-C1, ties.method = "first"))
+
+enc1 <- sum(base$top & base$en_c1); enc2 <- sum(base$top & base$en_c2)
+enc1_22 <- sum(m22$top22 & m22$c1_22); enc2_22 <- sum(m22$top22 & m22$c2_22)
+c1_ext <- sum(base$top & base$en_c1 & base$posicion %in% c("PG", "SG", "SF"))
+top_ext <- sum(base$top & base$posicion %in% c("PG", "SG", "SF"))
+
+tibble(`Universo` = c("Toda la base (2015-2022)", "Mercado 2022"),
+       `Top 10 % en VORP` = c(k, k22),
+       `Los incluye C1` = c(enc1, enc1_22),
+       `Se le escapan a C1` = c(k - enc1, k22 - enc1_22),
+       `Los incluye C2` = c(enc2, enc2_22),
+       `Se le escapan a C2` = c(k - enc2, k22 - enc2_22)) %>%
+  kable(caption = "¿Cuántos del Top 10 % en VORP aparecen en una lista del mismo tamaño?", align = "lrrrrr")
+```
+
+De los `r k` casos del Top 10 % en VORP, **C1 incluye `r enc1` y se le escapan `r k - enc1`**. Y eso que tomamos el lado de C1 que favorece al VORP (correlación de `r dec(cor(base$C1, base$valor_sobre_reemplazo))`). Los que incluye son pívots y ala-pívots: de los `r top_ext` bases, escoltas y aleros del Top 10 % aparecen `r c1_ext`. En 2022 el resultado se repite, con `r enc1_22` de `r k22`. Con C2 la lista incluye `r enc2` en toda la base y `r enc2_22` en 2022.
+
+El número que más información guarda no es entonces el que más se acerca al valor del jugador. C2 se parece más al VORP, pero con una salvedad: el VORP se acumula durante la temporada y tiene una correlación de `r dec(cor(base$valor_sobre_reemplazo, base$minutos_totales))` con los minutos totales, y los minutos por partido forman parte de C2. Las dos cosas se mueven juntas, y con estos datos no podemos decir que el protagonismo sea lo que da el valor.
+
+Por eso no recomendamos armar la lista de fichajes con C1. Si necesita un primer filtro de un solo número, C2 cuesta menos, aunque igual deja por fuera `r k - enc2` de los `r k` casos y hay que acompañarlo con una métrica de valor.
+
+```{r mal-representados}
+Z <- scale(X)
+m22 <- m22 %>% left_join(
+  base %>% mutate(conservado = C1^2 / rowSums(Z^2)) %>% filter(temporada == 2022) %>%
+    select(jugador, conservado), by = "jugador")
+
+casos <- c("Nikola Jokić", "Luka Dončić", "Trae Young", "Stephen Curry", "Rudy Gobert", "DeAndre Jordan")
+caso <- function(j, col) m22[[col]][m22$jugador == j]
+
+m22 %>% filter(jugador %in% casos) %>% arrange(rank_vorp) %>%
+  transmute(Jugador = jugador, `Posición` = as.character(posicion),
+            VORP = dec(valor_sobre_reemplazo, 1),
+            `Puesto en VORP` = rank_vorp, C1 = dec(C1),
+            `Puesto en C1` = rank_c1,
+            `¿En la lista de C1?` = ifelse(c1_22, "Sí", "No"),
+            `% de su perfil que conserva C1` = pct(conservado)) %>%
+  kable(caption = paste0("Mercado 2022: casos concretos entre ", nrow(m22),
+                         " jugadores (la lista de C1 tiene ", k22, " nombres)"),
+        align = "llrrrrlr")
+```
+
+Los nombres muestran bien el problema. **Nikola Jokić** es el primero de 2022 en VORP (`r dec(caso("Nikola Jokić", "valor_sobre_reemplazo"), 1)`), pero en C1 queda en el puesto `r caso("Nikola Jokić", "rank_c1")` y no entra a la lista de `r k22`. **Luka Dončić** es cuarto en VORP y cae al puesto `r caso("Luka Dončić", "rank_c1")`, con un C1 de `r dec(caso("Luka Dončić", "C1"))`, casi el promedio de la liga. **Trae Young** y **Stephen Curry**, ambos entre los diez primeros en VORP, bajan a los puestos `r caso("Trae Young", "rank_c1")` y `r caso("Stephen Curry", "rank_c1")`. También pasa al revés: **DeAndre Jordan** es `r caso("DeAndre Jordan", "rank_c1")`.º en C1 (`r dec(caso("DeAndre Jordan", "C1"))`) con un VORP de apenas `r dec(caso("DeAndre Jordan", "valor_sobre_reemplazo"), 1)`.
+
+El caso más claro es Dončić, porque C1 conserva solo `r pct(caso("Luka Dončić", "conservado"))` de cada 100 partes de lo que lo separa del jugador promedio. Lo que lo distingue (`r dec(caso("Luka Dončić", "porc_uso_jugador"), 1)` de uso y `r dec(caso("Luka Dončić", "porc_asistencias_equipo"), 1)` de asistencias) es justo lo que ese número no mira. A Young y a Curry los ubica bien en el perímetro, pero no los diferencia de un tirador de rotación. Y de los `r k22` nombres de la lista de 2022, `r k22 - enc1_22` no están en el Top 10 % de VORP.
+
+Con un solo número perdería de vista a la élite exterior y se llenaría la lista de pívots de rotación. Sirve para saber qué tipo de jugador tiene al frente, pero no para decidir a quién firmar.
+
+# 5. Los perfiles en el plano
+
+## El biplot
+
+```{r biplot, fig.height = 7.5}
+esc <- 0.9 * max(abs(base$C1), abs(base$C2)) / max(abs(pca$rotation[, 1:2]))
+flechas <- tibble(var = vars, etiqueta = etiquetas[vars],
+                  x = pca$rotation[, 1] * esc, y = pca$rotation[, 2] * esc)
+# Posición de cada etiqueta, a mano, para que no se encimen
+pos_flecha <- tribble(
+  ~var,                      ~dx,   ~dy,  ~hj,
+  "porc_asistencias_equipo", -0.05,  0.25, 1,
+  "porc_uso_jugador",         0.00,  0.30, 0.5,
+  "minutos_pp",               0.25,  0.05, 0,
+  "porc_robos_equipo",       -0.10,  0.15, 1,
+  "porc_tiro_verdadero",      0.10,  0.15, 0,
+  "razon_libres_intentos",    0.10,  0.15, 0,
+  "porc_rebotes_def_disp",    0.10,  0.20, 0,
+  "porc_rebotes_of_disp",     0.10, -0.25, 0,
+  "porc_tapones_equipo",     -0.10, -0.50, 1,
+  "porc_intentos_triple",     0.00, -0.35, 0)
+flechas <- left_join(flechas, pos_flecha, by = "var")
+
+nombrados <- c("Rudy Gobert", "Luka Dončić", "Tony Snell", "Devonte' Graham",
+               "Nikola Jokić", "Joel Embiid", "Trae Young")
+puntos22 <- filter(m22, jugador %in% nombrados)
+
+ggplot() +
+  geom_hline(yintercept = 0, color = "#cfcec8") +
+  geom_vline(xintercept = 0, color = "#cfcec8") +
+  geom_point(data = base, aes(C1, C2), color = gris, alpha = 0.35, size = 1) +
+  geom_segment(data = flechas, aes(0, 0, xend = x, yend = y),
+               arrow = arrow(length = unit(0.22, "cm")), color = azul, linewidth = 0.7) +
+  geom_label(data = flechas, aes(x + dx, y + dy, label = etiqueta, hjust = hj), size = 3.4,
+             fontface = "bold", color = tinta, fill = ggplot2::alpha("white", 0.75), label.size = 0,
+             label.padding = unit(0.1, "lines")) +
+  geom_point(data = puntos22, aes(C1, C2), color = naranja, size = 2.6) +
+  geom_text_repel(data = puntos22, aes(C1, C2, label = jugador), size = 3.3, color = "#52514e",
+                  bg.color = "white", bg.r = 0.15, box.padding = 0.5, min.segment.length = 0,
+                  max.overlaps = Inf, seed = 3) +
+  scale_x_continuous(labels = ejes, limits = c(-5.2, 8)) +
+  scale_y_continuous(labels = ejes) +
+  coord_equal() +
+  labs(title = "El mapa: jugadores (puntos) y columnas del tablero (flechas)",
+       subtitle = paste0("El plano guarda ", pct(acum[2]), " de cada 100 partes · en naranja, ejemplos de 2022"),
+       x = paste0("C1 · Perímetro ↔ Juego interior (", pct(info[1]), " de cada 100)"),
+       y = paste0("C2 · Protagonismo (", pct(info[2]), " de cada 100)"))
+```
+
+```{r angulos}
+ang <- function(a, b) {
+  va <- pca$rotation[a, 1:2]; vb <- pca$rotation[b, 1:2]
+  acos(sum(va * vb) / sqrt(sum(va^2) * sum(vb^2))) * 180 / pi
+}
+tribble(
+  ~a, ~b,
+  "porc_rebotes_of_disp", "porc_tapones_equipo",
+  "porc_rebotes_of_disp", "porc_rebotes_def_disp",
+  "minutos_pp", "porc_uso_jugador",
+  "porc_uso_jugador", "porc_asistencias_equipo",
+  "porc_rebotes_of_disp", "porc_intentos_triple",
+  "porc_rebotes_def_disp", "minutos_pp"
+) %>%
+  mutate(angulo = mapply(ang, a, b),
+         r = mapply(function(a, b) R[a, b], a, b),
+         lectura = case_when(angulo < 35 ~ "Van juntas",
+                             angulo > 145 ~ "Van en contra",
+                             angulo > 70 & angulo < 110 ~ "Cosas diferentes",
+                             TRUE ~ "Relación parcial")) %>%
+  transmute(`Flecha 1` = etiquetas[a], `Flecha 2` = etiquetas[b], `Ángulo (°)` = round(angulo),
+            Lectura = lectura, `Correlación real` = dec(r)) %>%
+  kable(caption = "Ángulos entre flechas y la correlación real que aproximan", align = "llrlr")
+```
+
+Las flechas forman dos abanicos casi perpendiculares. Rebote ofensivo, rebote defensivo y tapones apuntan a la derecha, y el % de triples va en sentido contrario (`r round(ang("porc_rebotes_of_disp", "porc_intentos_triple"))`° con el rebote ofensivo). Minutos, uso y asistencias apuntan hacia arriba (`r round(ang("minutos_pp", "porc_uso_jugador"))`° entre minutos y uso). Entre rebote defensivo y minutos hay `r round(ang("porc_rebotes_def_disp", "minutos_pp"))`°, así que representan cosas diferentes. Robos y eficiencia tienen las flechas más cortas.
+
+Para usted, cuánto juega alguien en la pintura y cuánto pasa el juego por él son dos preguntas distintas: saber una dice poco de la otra. Las flechas cortas avisan qué no se puede leer bien en este mapa. Hay que tener cuidado con los ángulos, porque el plano exagera los parecidos: entre rebote ofensivo y tapones hay `r round(ang("porc_rebotes_of_disp", "porc_tapones_equipo"))`°, pero su correlación real es `r dec(R["porc_rebotes_of_disp", "porc_tapones_equipo"])`. Por eso, el mapa sirve para ubicar candidatos, pero para fichar a un interior todavía hay que revisar rebote y tapones por separado.
+
+## Casos atípicos y casos cercanos
+
+```{r extremos}
+m22 %>% filter(jugador %in% c("Rudy Gobert", "Luka Dončić", "Tony Snell", "Devonte' Graham")) %>%
+  transmute(Jugador = jugador, C1 = dec(C1), C2 = dec(C2), Minutos = dec(minutos_pp, 1),
+            Uso = dec(porc_uso_jugador, 1), Asist. = dec(porc_asistencias_equipo, 1),
+            `Reb. of.` = dec(porc_rebotes_of_disp, 1), `% triples` = pct(porc_intentos_triple, 0),
+            TS = dec(porc_tiro_verdadero, 3)) %>%
+  kable(caption = paste0("Extremos del mapa en 2022. Promedio de la base: minutos ", dec(mean(X$minutos_pp), 1),
+                         ", uso ", dec(mean(X$porc_uso_jugador), 1),
+                         ", asistencias ", dec(mean(X$porc_asistencias_equipo), 1),
+                         ", rebote of. ", dec(mean(X$porc_rebotes_of_disp), 1),
+                         ", triples ", pct(mean(X$porc_intentos_triple), 0), " %"),
+        align = "lrrrrrrrr")
+```
+
+Cuatro jugadores marcan los bordes del mapa en 2022. **Rudy Gobert** está en el extremo derecho (C1 = `r dec(caso("Rudy Gobert", "C1"))`), con `r dec(caso("Rudy Gobert", "porc_rebotes_of_disp"), 1)` de rebote ofensivo frente a un promedio de `r dec(mean(X$porc_rebotes_of_disp), 1)` y casi sin triples. **Luka Dončić** está arriba de todos (C2 = `r dec(caso("Luka Dončić", "C2"))`) por su uso y sus asistencias. **Tony Snell** está en el borde inferior (C2 = `r dec(caso("Tony Snell", "C2"))`), con `r dec(caso("Tony Snell", "minutos_pp"), 1)` minutos por partido y `r dec(caso("Tony Snell", "porc_uso_jugador"), 1)` de uso. **Devonte' Graham** está a la izquierda (C1 = `r dec(caso("Devonte' Graham", "C1"))`), con el `r pct(caso("Devonte' Graham", "porc_intentos_triple"), 0)` % de sus tiros de triple.
+
+Estar en un extremo indica un perfil poco común, lo que no siempre significa más valor: Snell también está en un borde. Lo que sí complica es reemplazarlos. El vecino más cercano de Gobert en 2022, Hassan Whiteside, está a `r dec(dist(rbind(as.numeric(m22[m22$jugador == "Rudy Gobert", c("C1", "C2")]), as.numeric(m22[m22$jugador == "Hassan Whiteside", c("C1", "C2")]))))` unidades, cuando lo típico es tener al vecino más cercano a `r dec(median(apply(as.matrix(dist(m22[, c("C1", "C2")])) + diag(Inf, nrow(m22)), 1, min)))`. Si pierde a un jugador así, conviene planear el reemplazo como un cambio en la plantilla y no como una sustitución de nombre por nombre.
+
+```{r cercanos}
+i22 <- which(base$temporada == 2022)
+D_plano <- as.matrix(dist(base[i22, c("C1", "C2")]))
+D_total <- as.matrix(dist(Z[i22, ]))
+dimnames(D_plano) <- dimnames(D_total) <- list(base$jugador[i22], base$jugador[i22])
+mediana_total <- median(D_total[upper.tri(D_total)])
+
+parejas <- tribble(~a, ~b,
+                   "Joel Embiid", "Giannis Antetokounmpo",
+                   "Stephen Curry", "Damian Lillard",
+                   "Jeff Green", "Gary Payton II")
+parejas %>%
+  mutate(plano = mapply(function(a, b) D_plano[a, b], a, b),
+         total = mapply(function(a, b) D_total[a, b], a, b)) %>%
+  transmute(Jugador = a, `Su vecino en el mapa` = b, `Distancia en el mapa` = dec(plano),
+            `Distancia con las 10 columnas` = dec(total)) %>%
+  kable(caption = paste0("Parejas cercanas en el mapa, 2022. La distancia mediana entre dos jugadores con las 10 columnas es ",
+                         dec(mediana_total)), align = "llrr")
+```
+
+Estar cerca en el mapa no siempre significa parecerse. Embiid y Giannis Antetokounmpo están cerca en el mapa (`r dec(D_plano["Joel Embiid", "Giannis Antetokounmpo"])`) y también con las 10 columnas (`r dec(D_total["Joel Embiid", "Giannis Antetokounmpo"])`). Jeff Green y Gary Payton II están casi encima el uno del otro (`r dec(D_plano["Jeff Green", "Gary Payton II"])`), pero con las 10 columnas su distancia sube a `r dec(D_total["Jeff Green", "Gary Payton II"])`, bastante más que la mediana de `r dec(mediana_total)`. Parte de esa diferencia está en los robos: `r dec(caso("Gary Payton II", "porc_robos_equipo"), 1)` de Payton contra `r dec(caso("Jeff Green", "porc_robos_equipo"), 1)` de Green. El mapa sirve entonces para armar una lista de posibles sustitutos, pero cada nombre hay que confirmarlo con las 10 columnas antes de negociar.
+
+## ¿La posición nominal separa perfiles?
+
+```{r posiciones, fig.height = 7}
+centros <- base %>% group_by(posicion) %>%
+  summarise(C1 = mean(C1), C2 = mean(C2), .groups = "drop")
+
+ggplot(base, aes(C1, C2, color = posicion)) +
+  geom_point(alpha = 0.22, size = 0.9) +
+  stat_ellipse(type = "norm", level = 0.90, linewidth = 0.9) +
+  geom_point(data = centros, size = 3.6, shape = 21, fill = "white", stroke = 1.5) +
+  geom_text_repel(data = centros, aes(label = nombres_pos[as.character(posicion)]),
+                  size = 3.6, fontface = "bold", color = tinta, bg.color = "white", bg.r = 0.15,
+                  box.padding = 0.9, point.size = 5, min.segment.length = 0,
+                  show.legend = FALSE, seed = 5) +
+  scale_color_manual(values = col_pos, labels = nombres_pos, name = NULL) +
+  scale_x_continuous(labels = ejes) + scale_y_continuous(labels = ejes) +
+  coord_equal() +
+  labs(title = "El mapa coloreado por posición nominal, con elipses del 90 %",
+       subtitle = "Puntos blancos: promedio de cada posición",
+       x = "C1 · Perímetro ↔ Juego interior", y = "C2 · Protagonismo")
+```
+
+```{r cifras-posicion}
+# Fracción de los jugadores de A que cae dentro de la elipse del 90 % de B
+dentro_de <- function(A, B) {
+  pa <- as.matrix(base[base$posicion == A, c("C1", "C2")])
+  pb <- as.matrix(base[base$posicion == B, c("C1", "C2")])
+  mean(mahalanobis(pa, colMeans(pb), cov(pb)) <= qchisq(0.90, df = 2))
+}
+pos <- levels(base$posicion)
+solape <- outer(pos, pos, Vectorize(dentro_de)); dimnames(solape) <- list(pos, pos)
+dist_c <- as.matrix(dist(centros[, c("C1", "C2")])); dimnames(dist_c) <- list(pos, pos)
+
+as.data.frame(t(combn(pos, 2))) %>% setNames(c("a", "b")) %>%
+  mutate(d = mapply(function(a, b) dist_c[a, b], a, b),
+         ab = mapply(function(a, b) solape[a, b], a, b),
+         ba = mapply(function(a, b) solape[b, a], a, b)) %>%
+  arrange(d) %>%
+  transmute(`Posición A` = nombres_pos[a], `Posición B` = nombres_pos[b],
+            `Distancia entre promedios` = dec(d),
+            `% de A dentro de la elipse de B` = pct(ab, 0),
+            `% de B dentro de la elipse de A` = pct(ba, 0)) %>%
+  kable(caption = paste0("Distancia entre promedios y solapamiento (la desviación de C1 es ", dec(sd(base$C1)), ")"),
+        align = "llrrr")
+```
+
+Las posiciones avanzan en orden sobre C1, de base a pívot, sin huecos entre ellas. Las vecinas se pisan: el `r pct(solape["SF", "PF"], 0)` % de los aleros cae en la elipse de los ala-pívots (promedios a `r dec(dist_c["SF", "PF"])` unidades) y el `r pct(solape["SG", "SF"], 0)` % de los escoltas en la de los aleros (a `r dec(dist_c["SG", "SF"])`). Como cada elipse ya contiene al 90 % de su propio grupo, ese solapamiento es casi total. Solo los extremos quedan lejos: base y pívot están a `r dec(dist_c["PG", "C"])` unidades y apenas el `r pct(solape["PG", "C"], 0)` % de los bases cae en la elipse de los pívots.
+
+En resumen, **la posición nominal desplaza los perfiles, pero no los separa**. La etiqueta da una idea de dónde juega alguien, pero un alero y un ala-pívot pueden tener números intercambiables. Le sirve para distinguir extremos, como base frente a pívot. Para llenar una plaza es más útil describir lo que busca en el mapa («C1 alto, C2 medio») que pedir «un ala-pívot».
+
+## Dos cortes de negocio y cuatro zonas
+
+```{r zonas, fig.height = 6.5}
+dens <- density(base$C1, n = 1024)
+c1_corte <- dens$x[which(diff(sign(diff(dens$y))) == 2) + 1][1]
+c2_corte <- 1
+
+nombres_zona <- c(A = "A · Ejes exteriores", B = "B · Ejes interiores",
+                  C = "C · Rotación exterior", D = "D · Rotación interior")
+zonifica <- function(d) d %>% mutate(zona = case_when(
+  C2 >= c2_corte & C1 <  c1_corte ~ nombres_zona[["A"]],
+  C2 >= c2_corte & C1 >= c1_corte ~ nombres_zona[["B"]],
+  C2 <  c2_corte & C1 <  c1_corte ~ nombres_zona[["C"]],
+  TRUE                            ~ nombres_zona[["D"]]))
+base <- zonifica(base); m22 <- zonifica(m22)
+
+ggplot(base, aes(C1, C2, color = zona)) +
+  geom_point(alpha = 0.4, size = 1) +
+  geom_vline(xintercept = c1_corte, linetype = "dashed", color = tinta) +
+  geom_hline(yintercept = c2_corte, linetype = "dashed", color = tinta) +
+  scale_color_manual(values = setNames(c(azul, naranja, "#1baf7a", "#eda100"), nombres_zona), name = NULL,
+                     guide = guide_legend(override.aes = list(size = 3, alpha = 1))) +
+  scale_x_continuous(labels = ejes) + scale_y_continuous(labels = ejes) +
+  coord_equal() +
+  labs(title = "Cuatro zonas de trabajo con dos cortes elegidos por nosotros",
+       subtitle = paste0("Corte vertical: C1 = ", dec(c1_corte), " · corte horizontal: C2 = 1"),
+       x = "C1 · Perímetro ↔ Juego interior", y = "C2 · Protagonismo")
+```
+
+```{r conteo-zonas}
+accion <- c("Prioridad para renovar o fichar, siempre que pase la revisión de eficiencia",
+            "Primera prioridad para renovar: son pocos y difíciles de reponer",
+            "Complementos con contratos cortos; candidatos a dejar ir si no aportan eficiencia o robos",
+            "Suplentes de pintura; reemplazables salvo que su VORP diga lo contrario")
+
+resumen_zonas <- base %>% group_by(Zona = zona) %>%
+  summarise(`Casos 2015-2022` = n(), `Casos 2022` = sum(temporada == 2022),
+            `Del Top 10 % en VORP` = sum(top), .groups = "drop") %>%
+  left_join(m22 %>% group_by(Zona = zona) %>%
+              summarise(`VORP mediano 2022` = dec(median(valor_sobre_reemplazo), 1),
+                        `Del Top 10 % de 2022` = sum(top22), .groups = "drop"), by = "Zona") %>%
+  mutate(`Casos 2015-2022` = num(`Casos 2015-2022`), `Qué hace el GM` = accion)
+kable(resumen_zonas, caption = paste0("Cuántos casos caen en cada zona (Top 10 % en VORP: ", k, " en la base y ", k22, " en 2022)"),
+      align = "lrrrrrl")
+
+arriba <- function(c) c(casos = sum(base$C2 >= c), top = sum(base$top & base$C2 >= c))
+arriba22 <- sum(m22$C2 >= c2_corte); top_arriba22 <- sum(m22$top22 & m22$C2 >= c2_corte)
+```
+
+Estos dos cortes **los definimos nosotros como regla de negocio**. C1 = `r dec(c1_corte)` es el punto de menor densidad entre el grueso de los exteriores y los interiores, aunque ahí sigue habiendo jugadores, y C2 = 1 lo elegimos para aislar a los más protagonistas. Con ellos, en 2015-2022 quedan `r num(sum(base$zona == nombres_zona[["A"]]))` casos en A, `r num(sum(base$zona == nombres_zona[["B"]]))` en B, `r num(sum(base$zona == nombres_zona[["C"]]))` en C y `r num(sum(base$zona == nombres_zona[["D"]]))` en D. Las zonas A y B suman `r num(arriba(1)[["casos"]])` casos y reúnen `r arriba(1)[["top"]]` de los `r k` del Top 10 % en VORP.
+
+Las zonas son una forma de organizar el trabajo y no tipos de jugador, así que mover un corte cambia la lista. Con C2 = 0,5 habría que revisar `r num(arriba(0.5)[["casos"]])` casos, entre ellos `r arriba(0.5)[["top"]]` del Top 10 %. Con C2 = 2 serían solo `r arriba(2)[["casos"]]` casos y `r arriba(2)[["top"]]`. Usted elige entre una lista larga, con menos riesgo de dejar a alguien por fuera, y una corta, más rápida de revisar.
+
+Para el mercado 2022 proponemos revisar a fondo a los `r arriba22` jugadores de A y B, donde están `r top_arriba22` de los `r k22` del Top 10 % de ese año, y mirar a mano a los `r k22 - top_arriba22` que quedan debajo del corte, como Robert Williams (VORP `r dec(caso("Robert Williams", "valor_sobre_reemplazo"), 1)`) y Al Horford (VORP `r dec(caso("Al Horford", "valor_sobre_reemplazo"), 1)`). Estar arriba tampoco basta: Jalen Suggs está en la zona A con un VORP de `r dec(caso("Jalen Suggs", "valor_sobre_reemplazo"), 1)` y una eficiencia de `r dec(caso("Jalen Suggs", "porc_tiro_verdadero"), 3)`.
+
+## Un grupo que le importa: los ejes interiores de 2022
+
+```{r grupo}
+grupo <- m22 %>% filter(zona == nombres_zona[["B"]]) %>% arrange(desc(valor_sobre_reemplazo))
+resto_c <- m22 %>% filter(zona == nombres_zona[["C"]])
+
+grupo %>%
+  transmute(Jugador = jugador, Equipo = equipo, Edad = edad, C1 = dec(C1), C2 = dec(C2),
+            VORP = dec(valor_sobre_reemplazo, 1), TS = dec(porc_tiro_verdadero, 3),
+            Uso = dec(porc_uso_jugador, 1), Minutos = num(minutos_totales)) %>%
+  kable(caption = "Zona B en 2022: jugadores con juego interior y protagonismo a la vez", align = "llrrrrrrr")
+```
+
+Elegimos este grupo porque es el más escaso del mapa: solo `r nrow(grupo)` de los `r nrow(m22)` jugadores de 2022 (`r pct(nrow(grupo) / nrow(m22))` %) combinan juego interior y protagonismo. Su VORP mediano es `r dec(median(grupo$valor_sobre_reemplazo), 2)`, frente a `r dec(median(resto_c$valor_sobre_reemplazo), 2)` en la rotación exterior, y su eficiencia mediana es `r dec(median(grupo$porc_tiro_verdadero), 3)`. Aun así, hay diferencias grandes dentro del grupo, desde Nikola Jokić (VORP `r dec(caso("Nikola Jokić", "valor_sobre_reemplazo"), 1)`) hasta Jusuf Nurkić (VORP `r dec(caso("Jusuf Nurkić", "valor_sobre_reemplazo"), 1)`).
+
+Si pierde a uno de ellos, habrá pocos jugadores con números parecidos en el mercado. Por eso, si ya tiene a uno, su renovación debería ir primero en la lista; si no, vale la pena marcarlos como objetivo de canje. La base no trae salarios ni contratos, así que no sabemos cuánto cuestan ni si están disponibles. También hay que mirar los minutos: Anthony Davis tiene `r num(caso("Anthony Davis", "minutos_totales"))` y Jokić `r num(caso("Nikola Jokić", "minutos_totales"))`, y como el VORP es acumulado, sus cifras no se comparan directamente.
+
+# 6. Lo común y lo propio (Análisis Factorial I)
+
+El resumen anterior mete todo en la componente. Aquí separamos, en cada estadística, lo que **comparte** con las demás de lo que es **propio** de ella. La dimensión común no se mide directamente; se deduce de cómo se mueven juntas las columnas.
+
+## 6.1 ¿Cuánto comparte cada variable?
+
+```{r fa1}
+f1 <- fa(X, nfactors = 1, fm = "ml")
+s1 <- sign(f1$loadings["porc_rebotes_of_disp", 1])    # rebote ofensivo con signo positivo
+L1 <- s1 * as.numeric(f1$loadings[, 1]); names(L1) <- vars
+h2 <- f1$communality; u2 <- f1$uniquenesses
+```
+
+```{r comun-propia, fig.height = 5}
+ord_h <- names(sort(h2))
+tibble(var = vars, `Parte común (h²)` = 100 * h2[vars], `Parte propia (u²)` = 100 * u2[vars]) %>%
+  pivot_longer(-var) %>%
+  mutate(var = factor(etiquetas[var], levels = etiquetas[ord_h]),
+         name = factor(name, levels = c("Parte propia (u²)", "Parte común (h²)"))) %>%
+  ggplot(aes(value, var, fill = name)) +
+  geom_col(width = 0.68, color = "white", linewidth = 0.6) +
+  geom_text(aes(label = ifelse(value >= 7, dec(value, 1), "")),
+            position = position_stack(vjust = 0.5), color = "white", fontface = "bold", size = 3.6) +
+  scale_fill_manual(values = c("Parte común (h²)" = azul, "Parte propia (u²)" = naranja),
+                    breaks = c("Parte común (h²)", "Parte propia (u²)"), name = NULL) +
+  labs(title = "Qué parte de cada columna se comparte y qué parte es propia",
+       subtitle = "De cada 100 partes de las diferencias entre jugadores, con una sola dimensión común",
+       x = "De cada 100", y = NULL)
+```
+
+La comunalidad, es decir, la parte de cada columna que se mueve con la dimensión común (h²), llega a `r pct(h2["porc_rebotes_of_disp"])` de cada 100 en el rebote ofensivo. Le siguen el rebote defensivo (`r pct(h2["porc_rebotes_def_disp"])`), el % de triples (`r pct(h2["porc_intentos_triple"])`) y los tapones (`r pct(h2["porc_tapones_equipo"])`). En uso, minutos y robos no pasa de `r pct(max(h2[c("porc_uso_jugador", "minutos_pp", "porc_robos_equipo")]))`, y en promedio la dimensión recoge `r pct(mean(h2))` de cada 100 partes. La carga, es decir, qué tanto pesa esa dimensión en cada estadística, es de `r dec(L1["porc_rebotes_of_disp"])` en el rebote ofensivo y de `r dec(L1["porc_intentos_triple"])` en el % de triples.
+
+Una variable muy común se puede anticipar bastante con las demás; una muy propia cuenta algo que el resto no dice. Saber el rebote de un jugador, por ejemplo, dice casi nada de su uso. Además, el puntaje de esta dimensión tiene una correlación de `r dec(cor(s1 * fa(X, nfactors = 1, fm = "ml", scores = "regression")$scores[, 1], base$porc_rebotes_of_disp), 3)` con el rebote ofensivo, así que en la práctica es un índice de juego interior. Conviene llamarlo así y no usarlo para evaluar creadores de juego ni defensores de perímetro.
+
+## 6.2 ¿Alcanza una sola dimensión?
+
+```{r residuos, fig.height = 5.5}
+Rrep <- outer(L1, L1); dimnames(Rrep) <- dimnames(R)
+E1 <- R - Rrep; diag(E1) <- 0
+rmsr <- function(M) sqrt(mean(M[upper.tri(M)]^2))
+
+idx <- which(upper.tri(R), arr.ind = TRUE)
+comp1 <- tibble(a = rownames(R)[idx[, 1]], b = rownames(R)[idx[, 2]],
+                obs = R[idx], rep = Rrep[idx], res = E1[idx]) %>%
+  mutate(par = paste(etiquetas[a], "y", etiquetas[b])) %>%
+  arrange(desc(abs(res)))
+peor <- comp1[1, ]
+
+ggplot(comp1, aes(rep, obs)) +
+  geom_abline(slope = 1, intercept = 0, color = "#8a8983", linetype = "dashed") +
+  geom_point(color = azul, size = 2.6, alpha = 0.8) +
+  geom_point(data = comp1[1:3, ], color = naranja, size = 3.4) +
+  geom_text_repel(data = comp1[1:3, ], aes(label = par), size = 3.4, color = tinta, bg.color = "white",
+                  bg.r = 0.15, box.padding = 0.6, min.segment.length = 0, seed = 4) +
+  scale_x_continuous(labels = ejes) + scale_y_continuous(labels = ejes) +
+  coord_equal(xlim = c(-0.8, 0.85), ylim = c(-0.8, 0.85)) +
+  labs(title = "Lo que se observa frente a lo que reproduce una sola dimensión",
+       subtitle = "Cada punto es una pareja de columnas · sobre la diagonal, el modelo acierta\nEn naranja, los tres errores más grandes",
+       x = "Correlación reproducida (una dimensión)", y = "Correlación observada")
+```
+
+```{r residuos-tabla}
+comp1 %>% head(5) %>%
+  transmute(Pareja = par, Observada = dec(obs, 3), Reproducida = dec(rep, 3), Error = dec(res, 3)) %>%
+  kable(caption = "Los cinco errores más grandes (observada menos reproducida)", align = "lrrr")
+```
+
+**El error más grande está en `r peor$par`:** la correlación observada es `r dec(peor$obs, 3)` y el modelo reproduce `r dec(peor$rep, 3)`, una diferencia de **`r dec(peor$res, 3)`**. Después vienen `r comp1$par[2]` (`r dec(comp1$res[2], 3)`) y `r comp1$par[3]` (`r dec(comp1$res[3], 3)`). El error típico de las `r nrow(comp1)` parejas es `r dec(rmsr(E1), 3)`. El bloque interior, en cambio, sale bien: el mayor error del rebote ofensivo con otra columna es `r dec(max(abs(E1["porc_rebotes_of_disp", ])), 2)`.
+
+Entonces **una sola dimensión no alcanza**. Si alcanzara, los puntos estarían sobre la diagonal, y los tres errores mayores salen justo de uso, minutos y asistencias, el bloque de protagonismo de la sección 3. El índice único no recoge que esas columnas se mueven juntas, así que no recomendamos resumir al jugador en él. Lo siguiente es probar con dos dimensiones, en la sección 7.
+
+## 6.3 ¿Qué variable conserva más información propia?
+
+```{r mas-propia}
+var_propia <- names(which.max(u2))
+puntaje1 <- s1 * fa(X, nfactors = 1, fm = "ml", scores = "regression")$scores[, 1]
+alto <- function(v) v >= quantile(v, 0.80)
+
+costo <- lapply(c("porc_uso_jugador", "porc_robos_equipo", "minutos_pp",
+                  "porc_tiro_verdadero", "porc_rebotes_of_disp"), function(m) {
+  mejores <- alto(base[[m]]); elegidos <- alto(puntaje1)
+  tibble(Variable = etiquetas[m], `Parte propia (de cada 100)` = dec(100 * u2[m], 1),
+         `Mejor 20 %` = sum(mejores), `Los incluye el índice` = sum(mejores & elegidos),
+         `Se escapan` = sum(mejores & !elegidos),
+         `Se escapan (de cada 100)` = round(100 * sum(mejores & !elegidos) / sum(mejores)))
+}) %>% bind_rows()
+kable(costo, caption = "Si se elige al 20 % más alto del índice, ¿qué pasa con el mejor 20 % de cada columna?",
+      align = "lrrrrr")
+
+m22$indice <- puntaje1[i22]
+m22 <- m22 %>% mutate(rank_uso = rank(-porc_uso_jugador, ties.method = "first"),
+                      rank_ind = rank(-indice, ties.method = "first"))
+```
+
+La variable con más información propia es **`r etiquetas[var_propia]`**, con `r pct(u2[var_propia])` de cada 100 partes, y muy cerca están robos y minutos (`r pct(u2["porc_robos_equipo"])` cada una). Si elige al 20 % más alto del índice, de los `r costo$"Mejor 20 %"[1]` casos de mayor uso solo incluye a `r costo$"Los incluye el índice"[1]`: se le escapan `r costo$"Se escapan (de cada 100)"[1]` de cada 100, frente a `r costo$"Se escapan (de cada 100)"[5]` en el rebote ofensivo. En 2022, Luka Dončić tiene el uso más alto y queda en el puesto `r caso("Luka Dončić", "rank_ind")` del índice; Trae Young es cuarto en uso y queda en el `r m22$rank_ind[m22$jugador == "Trae Young"]`.
+
+El uso mide cuánto del ataque termina en un jugador y no debería perderse dentro de un índice general, donde su peso es casi nulo (`r dec(L1["porc_uso_jugador"])`). Eso sí, esta parte propia depende del modelo: con una dimensión el uso parece ir solo, pero en la sección 7 veremos que comparte bastante con minutos y asistencias. Robos y eficiencia, en cambio, siguen siendo propios con dos.
+
+Esto afecta una de las decisiones más caras del mercado: el contrato grande para quien sostiene el ataque. Si ignora el uso, Dončić y Young parecen jugadores comunes en la lista. Por eso conviene dejarlo fuera del índice interior y consultarlo directamente.
+
+# 7. ¿Dos dimensiones con nombre? (Análisis Factorial II)
+
+## 7.1 ¿Cuántas dimensiones caben?
+
+Antes de estimar hacemos la cuenta. Con p variables y k dimensiones, lo que queda para poner a prueba el modelo son los grados de libertad:
+
+<div class="formula">
+df = p(p−1)/2 − pk + k(k−1)/2<br>
+Con p = `r p` y k = 1: df = 45 − 10 + 0 = 35<br>
+Con p = `r p` y k = 2: df = 45 − 20 + 1 = 26
+</div>
+
+```{r grados}
+gl <- tibble(k = 1:7) %>%
+  mutate(`Correlaciones a explicar` = p * (p - 1) / 2,
+         pk = p * k,
+         `k(k−1)/2` = k * (k - 1) / 2,
+         df = p * (p - 1) / 2 - pk + `k(k−1)/2`,
+         `¿Se puede comprobar?` = case_when(df > 0 ~ "Sí", df == 0 ~ "No: ajusta sin prueba", TRUE ~ "No: imposible"))
+kable(gl, caption = paste("Grados de libertad según el número de dimensiones, con", p, "variables"), align = "rrrrrl")
+k_max <- max(gl$k[gl$df > 0])
+```
+
+Con `r p` variables hay `r p * (p - 1) / 2` correlaciones, y con dos dimensiones quedan `r gl$df[2]` grados de libertad. La cuenta sigue siendo positiva hasta `r k_max` dimensiones; con `r k_max + 1` da exactamente cero y con más da negativo.
+
+Cada dimensión que se agrega consume información. Con seis, el modelo ajustaría sin que nada lo pusiera a prueba, y que quepan `r k_max` tampoco quiere decir que existan `r k_max`. Para este taller, lo importante es que las dos dimensiones que necesitamos caben de sobra. Lo que falta ver es si se pueden nombrar y si se mantienen al cambiar el método.
+
+## 7.2 Dos dimensiones
+
+```{r fa2}
+# fa() no siempre entrega las dimensiones en el mismo orden ni con el mismo signo.
+# Para comparar entre métodos dejamos siempre:
+#   columna 1 = la dimensión donde más pesa el rebote ofensivo (con signo +)
+#   columna 2 = la dimensión donde más pesa el uso (con signo +)
+ordenar <- function(f) {
+  L <- unclass(f$loadings)
+  i1 <- which.max(abs(L["porc_rebotes_of_disp", ]))
+  i2 <- setdiff(1:2, i1)
+  orden <- c(i1, i2)
+  L <- L[, orden]
+  s <- sign(c(L["porc_rebotes_of_disp", 1], L["porc_uso_jugador", 2]))
+  L <- sweep(L, 2, s, `*`)
+  colnames(L) <- c("F1", "F2")
+  phi <- f$Phi[orden, orden] * outer(s, s)
+  list(L = L, phi = phi, h2 = f$communality, u2 = f$uniquenesses,
+       scores = if (!is.null(f$scores)) sweep(f$scores[, orden], 2, s, `*`))
+}
+residuos2 <- function(o) { E <- R - o$L %*% o$phi %*% t(o$L); diag(E) <- 0; E }
+
+f_ml <- fa(X, nfactors = 2, fm = "ml", rotate = "oblimin", scores = "regression")
+o_ml <- ordenar(f_ml)
+phi_ml <- o_ml$phi[1, 2]
+E2 <- residuos2(o_ml)
+
+orden_tabla <- rownames(o_ml$L)[order(-abs(o_ml$L[, 1]) * (abs(o_ml$L[, 1]) >= abs(o_ml$L[, 2])),
+                                      -abs(o_ml$L[, 2]))]
+tibble(Variable = etiquetas[orden_tabla],
+       `F1 · Juego interior` = dec(o_ml$L[orden_tabla, 1]),
+       `F2 · Protagonismo` = dec(o_ml$L[orden_tabla, 2]),
+       `Parte común (de cada 100)` = dec(100 * o_ml$h2[orden_tabla], 1),
+       `Parte propia (de cada 100)` = dec(100 * o_ml$u2[orden_tabla], 1)) %>%
+  kable(caption = "Pesos de cada columna en las dos dimensiones (máxima verosimilitud, oblimin)", align = "lrrrr")
+
+# Revisión de casos Heywood y de dimensiones sostenidas por una sola variable
+n_f1 <- sum(abs(o_ml$L[, 1]) >= 0.4 & abs(o_ml$L[, 1]) >= abs(o_ml$L[, 2]))
+n_f2 <- sum(abs(o_ml$L[, 2]) >= 0.4 & abs(o_ml$L[, 2]) >  abs(o_ml$L[, 1]))
+cupo1 <- alto(o_ml$scores[, 1]); cupo2 <- alto(o_ml$scores[, 2])
+
+# ¿Y una tercera? La regla automática de comparación con datos al azar la sugiere
+set.seed(26)
+invisible(capture.output(paralelo <- fa.parallel(X, fm = "ml", fa = "fa", plot = FALSE)))
+k_par <- paralelo$nfact
+f3 <- fa(X, nfactors = 3, fm = "ml", rotate = "oblimin")
+L3 <- unclass(f3$loadings)
+c3 <- setdiff(1:3, c(which.max(abs(L3["porc_rebotes_of_disp", ])), which.max(abs(L3["porc_uso_jugador", ]))))
+```
+
+**F1 · Juego interior** la definen rebote ofensivo (`r dec(o_ml$L["porc_rebotes_of_disp", 1])`), rebote defensivo (`r dec(o_ml$L["porc_rebotes_def_disp", 1])`), tapones (`r dec(o_ml$L["porc_tapones_equipo", 1])`), ataque al aro (`r dec(o_ml$L["razon_libres_intentos", 1])`) y, en contra, % de triples (`r dec(o_ml$L["porc_intentos_triple", 1])`). **F2 · Protagonismo** la definen uso (`r dec(o_ml$L["porc_uso_jugador", 2])`), asistencias (`r dec(o_ml$L["porc_asistencias_equipo", 2])`) y minutos (`r dec(o_ml$L["minutos_pp", 2])`). Su correlación es de **`r dec(phi_ml)`**. Frente al modelo de una dimensión, el error más grande baja de `r dec(max(abs(E1)), 3)` a `r dec(max(abs(E2)), 3)` y la parte propia del uso pasa de `r pct(u2["porc_uso_jugador"], 0)` a `r pct(o_ml$u2["porc_uso_jugador"], 0)` de cada 100. Robos y eficiencia casi no se mueven: quedan en `r pct(o_ml$u2["porc_robos_equipo"], 0)` y `r pct(o_ml$u2["porc_tiro_verdadero"], 0)`.
+
+Ninguna dimensión es una variable disfrazada, porque cada una se apoya en varias columnas (`r n_f1` en F1 y `r n_f2` en F2 con peso de al menos 0,4). Tampoco hay casos Heywood, es decir, columnas cuya parte común llegue a 100 o la supere. La más alta es el rebote ofensivo, con `r pct(max(o_ml$h2), 1)`, un valor alto que muestra cuánto se apoya F1 en esa columna.
+
+Como casi no van juntas, se pueden tratar como prácticamente independientes. Si arma una lista con el 20 % más alto de cada una (`r sum(cupo1)` casos por lista), solo `r sum(cupo1 & cupo2)` aparecen en ambas, `r round(100 * sum(cupo1 & cupo2) / sum(cupo1))` de cada 100, así que cada lista le muestra jugadores que la otra no. Una regla automática sugiere `r k_par` dimensiones, pero la tercera no tiene una variable que mande (su mayor peso es `r dec(max(abs(L3[, c3])))`, en eficiencia), y robos y eficiencia siguen siendo muy propios con ella (`r pct(f3$uniquenesses["porc_robos_equipo"], 0)` y `r pct(f3$uniquenesses["porc_tiro_verdadero"], 0)` de cada 100). Por ahora la dejamos como pista. Los dos nombres son provisionales hasta comprobar si se mantienen con otro método.
+
+## 7.3 ¿Son estables?
+
+```{r fa2-minres, fig.height = 5.2}
+f_mr <- fa(X, nfactors = 2, fm = "minres", rotate = "oblimin")
+o_mr <- ordenar(f_mr)
+phi_mr <- o_mr$phi[1, 2]
+cong <- diag(factor.congruence(o_ml$L, o_mr$L))
+dif <- abs(o_ml$L - o_mr$L)
+dif_max <- which(dif == max(dif), arr.ind = TRUE)
+
+bind_rows(
+  tibble(var = rownames(o_ml$L), metodo = "ml", as_tibble(o_ml$L)),
+  tibble(var = rownames(o_mr$L), metodo = "minres", as_tibble(o_mr$L))) %>%
+  pivot_longer(c(F1, F2), names_to = "dim", values_to = "peso") %>%
+  mutate(dim = c(F1 = "F1 · Juego interior", F2 = "F2 · Protagonismo")[dim],
+         var = factor(etiquetas[var], levels = rev(etiquetas[orden_tabla]))) %>%
+  ggplot(aes(peso, var, color = metodo, shape = metodo)) +
+  geom_vline(xintercept = 0, color = "#8a8983") +
+  geom_line(aes(group = var), color = gris, linewidth = 0.7) +
+  geom_point(size = 3) +
+  facet_wrap(~ dim) +
+  scale_color_manual(values = c(ml = azul, minres = naranja), name = "Método") +
+  scale_shape_manual(values = c(ml = 16, minres = 17), name = "Método") +
+  scale_x_continuous(labels = function(x) dec(x, 1)) +
+  labs(title = "Los mismos pesos con dos métodos de cálculo",
+       subtitle = "Si los dos puntos casi se tocan, el método no cambia la lectura",
+       x = "Peso", y = NULL)
+```
+
+```{r tabla-estabilidad}
+tibble(Variable = etiquetas[orden_tabla],
+       `F1 ml` = dec(o_ml$L[orden_tabla, 1]), `F1 minres` = dec(o_mr$L[orden_tabla, 1]),
+       `F2 ml` = dec(o_ml$L[orden_tabla, 2]), `F2 minres` = dec(o_mr$L[orden_tabla, 2]),
+       `Mayor cambio` = dec(apply(dif[orden_tabla, ], 1, max), 3)) %>%
+  kable(caption = "Comparación de pesos: únicamente cambia el método de cálculo", align = "lrrrrr")
+```
+
+Con `fm = "minres"`, las mismas columnas definen las mismas dimensiones. El mayor cambio en un peso es de `r dec(max(dif), 3)` (`r etiquetas[rownames(o_ml$L)[dif_max[1, 1]]]`, en `r colnames(dif)[dif_max[1, 2]]`), y el índice de parecido entre soluciones, donde 1 significa idénticas, da `r dec(cong[1], 2)` en F1 y `r dec(cong[2], 2)` en F2. La correlación entre dimensiones pasa de `r dec(phi_ml)` a `r dec(phi_mr)`, y la parte común más alta, la del rebote ofensivo, queda en `r pct(o_mr$h2["porc_rebotes_of_disp"], 1)`, sin casos Heywood.
+
+Es decir, **la estructura es estable** frente a este cambio de método. Eso no garantiza que se mantenga en otras temporadas, pero sí alcanza para usar los nombres *Juego interior* y *Protagonismo* en la selección, entendidos como etiquetas de columnas que se mueven juntas. Robos y eficiencia quedan fuera de las dos dimensiones y se siguen revisando aparte.
+
+# 8. La recomendación al cliente
+
+1. Sí puede resumir sus datos en un número, C1, pero ese número dice dónde juega alguien, del perímetro a la pintura, y no cuánto vale.
+2. C1 conserva `r pct(info[1])` de cada 100 partes de la información (`r pct(acum[2])` si le suma el protagonismo) y deja por fuera uso, minutos, asistencias y robos, por lo que le faltan `r k - enc1` de los `r k` casos del Top 10 % en VORP y, en 2022, jugadores como Nikola Jokić, Luka Dončić y Trae Young.
+3. Con estos datos se sostienen dos dimensiones, *Juego interior* y *Protagonismo*, que casi no van juntas (`r dec(phi_ml)`) y se mantienen al cambiar el método (índice de parecido de `r dec(min(cong), 2)` sobre 1), mientras que robos y eficiencia (`r pct(o_ml$u2["porc_robos_equipo"], 0)` y `r pct(o_ml$u2["porc_tiro_verdadero"], 0)` de cada 100 partes propias) hay que seguirlas mirando aparte.
+4. Recomendamos no decidir con un solo número, sino filtrar el mercado 2022 con C2 ≥ 1, que deja `r arriba22` de `r nrow(m22)` jugadores e incluye a `r top_arriba22` de los `r k22` del Top 10 % en VORP, ubicarlos con C1, dar prioridad de renovación a los `r nrow(grupo)` de la zona B, revisar a mano a los `r k22 - top_arriba22` valiosos que quedan bajo el corte, como Robert Williams y Al Horford, y confirmar eficiencia, robos y VORP antes de firmar o dejar ir a alguien.
+
+::: {.recuadro}
+### Qué no sabemos todavía
+
+- **Causas.** Sabemos qué estadísticas se mueven juntas, no por qué. Nada aquí permite afirmar que dar más protagonismo a un jugador aumente su valor, ni que las dimensiones sean aptitudes del jugador.
+- **El futuro.** Describimos temporadas hasta 2022. No predecimos cómo rendirá un jugador en 2023, cómo envejecerá ni si se lesionará.
+- **Lesiones y excluidos.** Los `r nrow(ex22)` jugadores de 2022 con menos de 500 minutos quedaron por fuera, algunos con muy pocos partidos, y la base no registra si fue por lesión. Tampoco representamos a jugadores anteriores a 2015 ni a novatos que aún no han jugado en la liga.
+- **Contrato y salario.** La base no trae salarios ni años de contrato. No sabemos si un jugador es caro o barato, ni si está disponible: la recomendación ordena a quién revisar, no a quién pagar.
+- **Química de equipo y sistema de juego.** No medimos el encaje con los compañeros, el vestuario ni cuánto de un número viene del sistema del entrenador. Tampoco la defensa en sentido amplio: robos y tapones son solo una parte de ella.
+- **Los minutos pueden inflar el VORP.** Es un acumulado de la temporada y tiene una correlación de `r dec(cor(base$valor_sobre_reemplazo, base$minutos_totales))` con los minutos totales. Un jugador con buenas tasas pero menos minutos, como Anthony Davis en 2022, puede quedar por debajo en esta métrica. Parte de lo que comparte con C2 viene de ahí.
+- **Observaciones repetidas.** Los `r num(n)` casos son `r num(n_distinct(base$jugador))` jugadores distintos, varios con más de una temporada, así que los casos no son independientes entre sí.
+- **Los cortes y los nombres son nuestros.** Las zonas son una regla de trabajo y con otros cortes cambian los conteos. Los nombres de las dimensiones también son decisión nuestra, y aunque se mantienen al cambiar de método, no los probamos en otras épocas.
+:::
