@@ -1,0 +1,455 @@
+---
+title: "¿Son distintos estos grupos? · NBA"
+subtitle: "Taller 2 · Hotelling y análisis discriminante · Estadística Multidimensional - 26158 · grupo 020-81"
+author:
+  - "Andrey Camilo Gonzalez Caceres · 20231020070"
+  - "Julian David Pulido Carreño · 20231020064"
+  - "David Martínez Rincón · 20222020167"
+date: "9 de noviembre de 2026"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    number_sections: false
+    theme: flatly
+    code_folding: hide
+    self_contained: true
+---
+
+<style>
+.recuadro {
+  border: 2px solid #1D428A;
+  border-radius: 6px;
+  background: #f3f6fb;
+  padding: 16px 22px;
+  margin: 28px 0;
+}
+.recuadro h3 { margin-top: 0; }
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 9, fig.height = 5.2, fig.align = "center")
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(knitr)
+library(MASS, exclude = "select")   # MASS::lda(); se excluye select() para no tapar el de dplyr
+
+# Colores de la NBA
+azul <- "#1D428A"; rojo <- "#C8102E"; gris <- "#B9B8B2"; tinta <- "#2B2B2A"
+
+theme_set(theme_minimal(base_size = 13) +
+            theme(plot.title.position = "plot",
+                  plot.title = element_text(face = "bold", color = tinta),
+                  plot.subtitle = element_text(color = "#52514e"),
+                  panel.grid.minor = element_blank(),
+                  panel.grid.major = element_line(color = "#ecebe7"),
+                  legend.position = "top"))
+
+# Números con coma decimal
+dec <- function(x, d = 2) formatC(ifelse(abs(x) < 0.5 * 10^-d, 0, x), format = "f", digits = d, decimal.mark = ",")
+pct <- function(x, d = 1) dec(100 * x, d)
+num <- function(x) formatC(x, format = "d", big.mark = ".", decimal.mark = ",")
+# Probabilidad de azar en palabras
+azar <- function(p) if (p < 1e-6) "menos de una en un millón" else paste("una en", num(round(1 / p)))
+```
+
+```{r funciones-notas}
+# Las dos funciones, tal como están en las notas de clase (Hotelling_Grupos_Distintos)
+hotelling_1 <- function(Y, mu) {
+  n <- nrow(Y); p <- ncol(Y); dif <- colMeans(Y) - mu
+  D2 <- as.numeric(t(dif) %*% solve(cov(Y)) %*% dif)
+  T2 <- n * D2; F <- (n - p) / (p * (n - 1)) * T2
+  c(n = n, D = sqrt(D2), T2 = T2, F = F, p = pf(F, p, n - p, lower.tail = FALSE))
+}
+
+hotelling_2 <- function(A, B) {
+  n1 <- nrow(A); n2 <- nrow(B); p <- ncol(A)
+  Sp <- ((n1 - 1) * cov(A) + (n2 - 1) * cov(B)) / (n1 + n2 - 2)
+  dif <- colMeans(A) - colMeans(B)
+  D2 <- as.numeric(t(dif) %*% solve(Sp) %*% dif)
+  T2 <- n1 * n2 / (n1 + n2) * D2
+  F  <- (n1 + n2 - p - 1) / (p * (n1 + n2 - 2)) * T2
+  c(D = sqrt(D2), T2 = T2, F = F, p = pf(F, p, n1 + n2 - p - 1, lower.tail = FALSE))
+}
+```
+
+# 1. El encargo
+
+Este informe es para usted, *General Manager* de una franquicia de la NBA al cierre de la temporada 2022. En los talleres anteriores resumimos el tablero de estadísticas con que su equipo compara candidatos; ahora la pregunta es otra: cuando usted pone a dos grupos de jugadores lado a lado, ¿de verdad son distintos? Le sirven dos comparaciones. La primera es de **una muestra**: los jugadores de 2022, que son el mercado sobre el que va a fichar o renovar, frente al promedio de 2015-2021. Esa referencia no es una cifra oficial de la liga; es el promedio de nuestra propia base en las siete temporadas anteriores, y la escogemos porque es la "norma" con la que su equipo de scouting aprendió a decir si un número es alto o bajo. Si el mercado de 2022 ya no se parece a esa norma, las reglas de bolsillo quedaron viejas. La segunda es de **dos muestras**: titulares frente a suplentes, porque cada renovación implica decidir si un jugador vale salario de titular y cada fichaje de banca implica preguntarse si ese suplente podría dar el salto.
+
+```{r variables}
+vars <- c("porc_uso_jugador", "porc_tiro_verdadero", "porc_intentos_triple",
+          "porc_asistencias_equipo", "porc_rebotes_tot_disp", "porc_robos_equipo")
+etiquetas <- c(porc_uso_jugador = "Uso (USG%)", porc_tiro_verdadero = "Eficiencia (TS%)",
+               porc_intentos_triple = "% tiros de triple", porc_asistencias_equipo = "Asistencias (AST%)",
+               porc_rebotes_tot_disp = "Rebote (TRB%)", porc_robos_equipo = "Robos (STL%)")
+
+tibble(Variable = etiquetas[vars],
+       Unidad = c("% de jugadas", "proporción de 0 a 1", "proporción de 0 a 1",
+                  "% de canastas", "% de rebotes", "% de posesiones"),
+       `Qué le dice al GM` = c("Cuántas jugadas del equipo terminan en él",
+                               "Puntos por tiro, contando triples y libres",
+                               "Qué parte de sus tiros es de tres",
+                               "Cuántas canastas de sus compañeros asiste",
+                               "Qué parte de los rebotes disponibles captura",
+                               "Qué parte de las posesiones rivales recupera")) %>%
+  kable(caption = "Las seis variables de las dos comparaciones")
+```
+
+Usamos seis variables del tablero de los talleres de componentes principales y factorial, todas tasas o proporciones, para que no gane el que simplemente jugó más. Cubren lo que un GM mira de un jugador: cuánto protagonismo tiene (uso), qué tan bien convierte (eficiencia), desde dónde tira (triples), si crea para otros (asistencias), si cierra posesiones (rebote) y si defiende el balón (robos). Dejamos por fuera los minutos a propósito, porque en la comparación de titulares y suplentes casi definen el grupo; en la sección 4 los usamos como la variable que viaja con él.
+
+```{r datos, class.source = "fold-show"}
+nba <- read.csv("NBA_espanol.csv", fileEncoding = "UTF-8")
+
+# Misma limpieza del taller de PCA y factorial
+base <- nba %>%
+  filter(temporada >= 2015,                      # era del triple
+         minutos_totales >= 500) %>%             # rol real: tasas estables
+  mutate(posicion = factor(sub("-.*", "", posicion), levels = c("PG", "SG", "SF", "PF", "C"))) %>%
+  filter(if_all(all_of(vars), ~ !is.na(.x)))     # información completa
+
+# Las dos comparaciones
+base <- base %>%
+  mutate(epoca = ifelse(temporada == 2022, "Mercado 2022", "2015-2021"),
+         rol   = factor(ifelse(partidos_titular / partidos_jugados >= 0.5, "Titular", "Suplente"),
+                        levels = c("Titular", "Suplente")))
+
+X  <- as.matrix(base[vars])
+p  <- length(vars)
+de_ref <- apply(X[base$epoca == "2015-2021", ], 2, sd)   # desviaciones de la referencia
+
+c(jugadores_temporada = nrow(base), mercado_2022 = sum(base$epoca == "Mercado 2022"),
+  referencia_2015_2021 = sum(base$epoca == "2015-2021"),
+  titulares = sum(base$rol == "Titular"), suplentes = sum(base$rol == "Suplente"))
+```
+
+Partimos de los mismos `r num(nrow(base))` casos jugador-temporada del taller anterior: temporadas desde 2015 y al menos 500 minutos jugados, con las variables completas. Llamamos **titular** a quien arrancó al menos la mitad de los partidos que jugó en la temporada; así quedan `r num(sum(base$rol == "Titular"))` titulares y `r num(sum(base$rol == "Suplente"))` suplentes. El mercado 2022 tiene `r sum(base$epoca == "Mercado 2022")` jugadores y la referencia de 2015-2021 se calcula con `r num(sum(base$epoca == "2015-2021"))`.
+
+# 2. Una muestra: ¿el mercado 2022 es distinto de 2015-2021?
+
+## 2.1 Variable por variable
+
+```{r una-dif}
+X22 <- X[base$epoca == "Mercado 2022", ]
+n22 <- nrow(X22)
+mu  <- colMeans(X[base$epoca == "2015-2021", ])    # la referencia
+dif_22 <- colMeans(X22) - mu
+
+tibble(Variable = etiquetas[vars],
+       `2015-2021` = dec(mu, 3), `Mercado 2022` = dec(colMeans(X22), 3),
+       Diferencia = dec(dif_22, 3), `En desviaciones` = dec(dif_22 / de_ref, 2)) %>%
+  kable(caption = "Promedios del mercado 2022 y de la referencia 2015-2021", align = "lrrrr")
+```
+
+```{r una-graf, fig.height = 4.6}
+tibble(var = factor(etiquetas[vars], levels = rev(etiquetas[vars])), d = dif_22 / de_ref) %>%
+  ggplot(aes(d, var, fill = d > 0)) +
+  geom_col(width = 0.6) +
+  geom_vline(xintercept = 0, color = "grey40") +
+  geom_text(aes(label = dec(d), hjust = ifelse(d >= 0, -0.2, 1.2)), size = 4.2, color = tinta) +
+  scale_fill_manual(values = c(`TRUE` = azul, `FALSE` = rojo), guide = "none") +
+  scale_x_continuous(limits = c(-0.1, 0.4), labels = function(x) dec(x, 1)) +
+  labs(title = "Mercado 2022 frente a 2015-2021, variable por variable",
+       subtitle = paste0(n22, " jugadores de 2022 · azul: por encima de la referencia · 0 = promedio 2015-2021"),
+       x = "Diferencia en desviaciones de 2015-2021", y = NULL)
+```
+
+La diferencia del mercado 2022 se concentra en dos variables. Los jugadores de 2022 convierten mejor, con una eficiencia `r dec(dif_22[["porc_tiro_verdadero"]], 3)` más alta (`r dec(dif_22[["porc_tiro_verdadero"]] / de_ref[["porc_tiro_verdadero"]])` desviaciones), y tiran más de tres: el `r pct(colMeans(X22)[["porc_intentos_triple"]], 1)` % de sus tiros es triple, contra `r pct(mu[["porc_intentos_triple"]], 1)` % antes (`r dec(dif_22[["porc_intentos_triple"]] / de_ref[["porc_intentos_triple"]])` desviaciones). Uso, rebote y robos casi no se mueven. Para usted, esto quiere decir que una eficiencia de `r dec(mu[["porc_tiro_verdadero"]], 3)`, que hace unos años era la del jugador promedio, hoy queda por debajo del promedio del mercado. Antes de usar tablas o intuiciones viejas para decir que un candidato "tira bien" o "abre la cancha", conviene recalcular los promedios con 2022. Las barras muestran hacia dónde se movió el mercado, pero no cuánto suman entre todas.
+
+## 2.2 ¿Es grande?
+
+```{r una-D}
+h_22 <- hotelling_1(X22, mu)
+round(h_22[["D"]], 3)
+```
+
+Contando las seis variables al tiempo, el mercado 2022 está a **`r dec(h_22[["D"]])` desviaciones** de la referencia 2015-2021. La cifra es mayor que cualquier barra suelta porque la distancia tiene en cuenta cómo se mueven juntas las variables: en 2015-2021, quien tiraba más triples solía tomar menos rebotes (correlación de `r dec(cor(X[base$epoca == "2015-2021", "porc_intentos_triple"], X[base$epoca == "2015-2021", "porc_rebotes_tot_disp"]))`), y en 2022 sube el triple sin que baje el rebote. Esa combinación era poco común y la distancia la cuenta. Es algo más de media desviación: un cambio moderado, mayor que el del Atlántico en las notas (0,42), pero lejos de un mercado irreconocible. Para usted, el jugador típico de 2022 sigue pareciéndose más al de 2015-2021 de lo que se diferencia. Lo que cambió fue la vara de comparación, más que el tipo de jugador, así que puede recalibrar sus referencias de tiro y triple sin cambiar de un día para otro el perfil de jugador que busca.
+
+## 2.3 ¿Es real?
+
+```{r una-azar, fig.height = 4.4}
+Xref <- X[base$epoca == "2015-2021", ]
+set.seed(711)
+D_azar <- replicate(1000, {
+  g <- Xref[sample(nrow(Xref), n22), ]
+  d <- colMeans(g) - mu
+  sqrt(as.numeric(t(d) %*% solve(cov(g)) %*% d))
+})
+signif(h_22, 4)
+c(distancia_tipica_por_azar = round(median(D_azar), 3),
+  la_mayor_de_1000 = round(max(D_azar), 3),
+  la_del_mercado_2022 = round(h_22[["D"]], 3))
+
+ggplot(data.frame(D = D_azar), aes(D)) +
+  geom_histogram(bins = 40, fill = gris, color = "white") +
+  geom_vline(xintercept = h_22[["D"]], color = rojo, linewidth = 1.2) +
+  annotate("text", x = h_22[["D"]], y = Inf, vjust = 1.5, hjust = 1.05, color = rojo,
+           label = paste0("Mercado 2022: ", dec(h_22[["D"]])), fontface = "bold", size = 4.3) +
+  scale_x_continuous(labels = function(x) dec(x, 1)) +
+  labs(title = paste0("1.000 grupos de ", n22, " jugadores sacados al azar de 2015-2021"),
+       subtitle = "Gris: qué tan lejos de la referencia quedan por puro azar",
+       x = "Distancia al promedio 2015-2021 (desviaciones)", y = "Grupos")
+```
+
+Un grupo de `r n22` jugadores sacado al azar de 2015-2021 queda típicamente a `r dec(median(D_azar))` desviaciones de la referencia, y el más lejano de los mil quedó a `r dec(max(D_azar))`. El mercado 2022 está a `r dec(h_22[["D"]])`, muy por fuera de lo que da el azar, y con `hotelling_1()` la probabilidad de ver una distancia así por casualidad es `r azar(h_22[["p"]])`. Para usted esto quiere decir que el corrimiento no es una temporada rara ni la suerte de una camada: el mercado sí se movió. Que sea real no lo hace más grande; sigue siendo un desplazamiento moderado de `r dec(h_22[["D"]])`. Puede actualizar sus referencias con tranquilidad, porque el cambio se sostiene. Una advertencia: muchos jugadores aparecen en varias temporadas, así que los casos no son del todo independientes y esa probabilidad es algo optimista. Con una distancia tan por fuera de la simulación, la conclusión no cambia.
+
+## 2.4 ¿Separa?
+
+Que el promedio de 2022 se haya movido no dice que cada jugador de 2022 se haya movido. Para medirlo, combinamos las seis variables en un solo puntaje: la mezcla que más aleja al mercado 2022 de la referencia, la misma que usa la distancia $D$. Un puntaje alto indica un perfil "de 2022" (más triple y mejor conversión sin perder rebote). Después contamos cuántos jugadores de 2022 quedan por debajo de la mediana de los jugadores de 2015-2021.
+
+```{r una-separa}
+S22 <- cov(X22)
+w   <- solve(S22, dif_22)                                 # dirección de la distancia D
+base$perfil22 <- as.numeric(sweep(X, 2, mu) %*% w) / h_22[["D"]]
+mediana_ref <- median(base$perfil22[base$epoca == "2015-2021"])
+abajo_22 <- mean(base$perfil22[base$epoca == "Mercado 2022"] < mediana_ref)
+c(mediana_2015_2021 = round(mediana_ref, 2),
+  jugadores_2022_debajo = sum(base$perfil22[base$epoca == "Mercado 2022"] < mediana_ref),
+  de_cada_100 = round(100 * abajo_22, 1))
+```
+
+```{r una-caso}
+caso <- function(j, t = 2022) base[base$jugador == j & base$temporada == t, ]
+dero <- caso("DeMar DeRozan")
+dero_supera <- mean(base$perfil22[base$epoca == "2015-2021"] > dero$perfil22)
+tibble(Jugador = c("DeMar DeRozan (CHI, 2022)", "Promedio 2015-2021", "Promedio mercado 2022"),
+       `Uso` = dec(c(dero$porc_uso_jugador, mu[["porc_uso_jugador"]], colMeans(X22)[["porc_uso_jugador"]]), 1),
+       `TS%` = dec(c(dero$porc_tiro_verdadero, mu[["porc_tiro_verdadero"]], colMeans(X22)[["porc_tiro_verdadero"]]), 3),
+       `% triples` = dec(c(dero$porc_intentos_triple, mu[["porc_intentos_triple"]], colMeans(X22)[["porc_intentos_triple"]]), 3),
+       `AST%` = dec(c(dero$porc_asistencias_equipo, mu[["porc_asistencias_equipo"]], colMeans(X22)[["porc_asistencias_equipo"]]), 1),
+       `TRB%` = dec(c(dero$porc_rebotes_tot_disp, mu[["porc_rebotes_tot_disp"]], colMeans(X22)[["porc_rebotes_tot_disp"]]), 1),
+       `Puntaje "perfil 2022"` = c(dec(dero$perfil22), "", ""),
+       VORP = c(dec(dero$valor_sobre_reemplazo, 1), "", "")) %>%
+  kable(caption = "Un jugador del mercado 2022 del otro lado de la referencia", align = "lrrrrrrr")
+```
+
+```{r una-separa-graf, fig.height = 4.6}
+ggplot(base, aes(perfil22, fill = epoca, color = epoca)) +
+  geom_density(alpha = 0.35, linewidth = 0.8) +
+  geom_vline(xintercept = mediana_ref, linetype = "dashed", color = tinta) +
+  geom_vline(xintercept = dero$perfil22, color = rojo, linewidth = 0.9) +
+  annotate("label", x = dero$perfil22, y = Inf, vjust = 1.3, label = "DeRozan 2022",
+           color = rojo, size = 3.6, fontface = "bold", label.size = 0) +
+  annotate("label", x = mediana_ref, y = 0, vjust = -0.3, hjust = -0.05,
+           label = "mediana 2015-2021", size = 3.4, color = tinta, label.size = 0) +
+  scale_fill_manual(values = c("2015-2021" = gris, "Mercado 2022" = azul), name = NULL) +
+  scale_color_manual(values = c("2015-2021" = "grey45", "Mercado 2022" = azul), name = NULL) +
+  scale_x_continuous(labels = function(x) dec(x, 0)) +
+  labs(title = "Las dos épocas en el puntaje que mejor las distingue",
+       subtitle = "Las curvas están corridas, pero se montan casi por completo",
+       x = "Puntaje \"perfil 2022\" (desviaciones; 0 = promedio 2015-2021)", y = NULL) +
+  theme(axis.text.y = element_blank())
+```
+
+`r sum(base$perfil22[base$epoca == "Mercado 2022"] < mediana_ref)` jugadores de 2022, **`r pct(abajo_22)` de cada 100**, quedan por debajo de la mediana de 2015-2021 en el puntaje que mejor distingue las dos épocas. Si el mercado no se hubiera movido serían 50, y si se hubiera separado del todo serían casi cero. Uno de ellos es DeMar DeRozan, que en 2022 fue de los jugadores más valiosos del mercado (VORP de `r dec(dero$valor_sobre_reemplazo, 1)`) con un perfil que parece de otra época: apenas el `r pct(dero$porc_intentos_triple, 1)` % de sus tiros fue de tres, y en el puntaje queda más "antiguo" que `r pct(dero_supera, 0)` de cada 100 jugadores de 2015-2021. Para usted, el mercado está desplazado hacia el triple y la eficiencia, pero no separado: hay una cuarta parte de jugadores de 2022 que juegan como se jugaba antes, y algunos rinden muy bien así. Le sirve para actualizar sus referencias de grupo, no para descartar a un candidato porque su perfil "no es moderno". A DeRozan habría que evaluarlo por su producción, no por si tira triples.
+
+# 3. Dos muestras: ¿titulares y suplentes son distintos?
+
+## 3.1 ¿Nivel o perfil?
+
+```{r dos-dif}
+Xt <- X[base$rol == "Titular", ]; Xs <- X[base$rol == "Suplente", ]
+nt <- nrow(Xt); ns <- nrow(Xs)
+Sp <- ((nt - 1) * cov(Xt) + (ns - 1) * cov(Xs)) / (nt + ns - 2)
+dif_rol <- colMeans(Xt) - colMeans(Xs)
+de_sp <- sqrt(diag(Sp))
+
+tibble(Variable = etiquetas[vars],
+       Titulares = dec(colMeans(Xt), 3), Suplentes = dec(colMeans(Xs), 3),
+       Diferencia = dec(dif_rol, 3), `En desviaciones` = dec(dif_rol / de_sp, 2)) %>%
+  kable(caption = paste0("Promedios de titulares (", num(nt), ") y suplentes (", num(ns), ")"), align = "lrrrr")
+```
+
+```{r dos-graf, fig.height = 4.6}
+tibble(var = factor(etiquetas[vars], levels = rev(etiquetas[vars])), d = dif_rol / de_sp) %>%
+  ggplot(aes(d, var, fill = d > 0)) +
+  geom_col(width = 0.6) +
+  geom_vline(xintercept = 0, color = "grey40") +
+  geom_text(aes(label = dec(d), hjust = ifelse(d >= 0, -0.2, 1.2)), size = 4.2, color = tinta) +
+  scale_fill_manual(values = c(`TRUE` = azul, `FALSE` = rojo), guide = "none") +
+  scale_x_continuous(limits = c(-0.45, 0.9), labels = function(x) dec(x, 1)) +
+  labs(title = "Titulares menos suplentes, variable por variable",
+       subtitle = "Azul: ventaja de los titulares · rojo: ventaja de los suplentes",
+       x = "Diferencia en desviaciones (combinadas de los dos grupos)", y = NULL)
+```
+
+La diferencia es, sobre todo, de **nivel**, con un cruce. Los titulares están por encima en cinco de las seis variables y la ventaja grande está en el protagonismo: uso (`r dec(dif_rol[["porc_uso_jugador"]] / de_sp[["porc_uso_jugador"]])` desviaciones, `r dec(colMeans(Xt)[["porc_uso_jugador"]], 1)` contra `r dec(colMeans(Xs)[["porc_uso_jugador"]], 1)` % de jugadas) y asistencias (`r dec(dif_rol[["porc_asistencias_equipo"]] / de_sp[["porc_asistencias_equipo"]])`). El cruce está en el triple: los suplentes tiran más de tres (`r pct(colMeans(Xs)[["porc_intentos_triple"]], 1)` % de sus tiros contra `r pct(colMeans(Xt)[["porc_intentos_triple"]], 1)` %). Esto encaja con un rol conocido: el suplente promedio entra a abrir la cancha y el titular promedio concentra más jugadas y crea para otros. Para usted, los titulares no rinden mejor en todo. Tienen más balón, y el suplente aporta otra cosa, el tiro exterior, que tiene su propio valor de mercado. Al armar la banca puede buscar ese perfil a propósito en lugar de leerlo como un "titular de segunda".
+
+Dos jugadores de 2022 con un aporte parecido y perfiles opuestos sirven para verlo de cerca: Tyler Herro, suplente y sexto hombre del año, y Royce O'Neale, titular en Utah.
+
+```{r dos-casos}
+herro <- caso("Tyler Herro"); oneale <- caso("Royce O'Neale")
+bind_rows(herro, oneale) %>%
+  transmute(Jugador = jugador, Equipo = equipo, Rol = as.character(rol),
+            `Titular/partidos` = paste0(partidos_titular, "/", partidos_jugados),
+            `Min/partido` = dec(minutos_pp, 1),
+            Uso = dec(porc_uso_jugador, 1), `TS%` = dec(porc_tiro_verdadero, 3),
+            `% triples` = dec(porc_intentos_triple, 3), `AST%` = dec(porc_asistencias_equipo, 1),
+            `TRB%` = dec(porc_rebotes_tot_disp, 1), `STL%` = dec(porc_robos_equipo, 1),
+            VORP = dec(valor_sobre_reemplazo, 1)) %>%
+  kable(caption = "Dos jugadores de 2022 con aporte parecido y perfiles opuestos", align = "lllrrrrrrrrr")
+```
+
+Herro y O'Neale terminaron 2022 con un aporte parecido (VORP de `r dec(herro$valor_sobre_reemplazo, 1)` y `r dec(oneale$valor_sobre_reemplazo, 1)`) y con los perfiles cambiados respecto a su grupo. Herro, el suplente, usó el `r dec(herro$porc_uso_jugador, 1)` % de las jugadas y asistió el `r dec(herro$porc_asistencias_equipo, 1)` % de las canastas, números de titular protagonista, y jugó `r dec(herro$minutos_pp, 1)` minutos por partido. O'Neale, el titular, usó apenas el `r dec(oneale$porc_uso_jugador, 1)` % y el `r pct(oneale$porc_intentos_triple, 0)` % de sus tiros fue de tres, el perfil típico de un suplente especialista. Para usted, la etiqueta de titular o suplente describe el rol que le dio su entrenador, no el tipo de jugador. Un suplente puede tener el perfil de creador que usted busca para el quinteto y un titular puede ser un complemento de bajo uso. En una negociación, mire el perfil del jugador y no si arrancaba o no.
+
+## 3.2 ¿Es grande y es real?
+
+```{r dos-hotelling}
+h_rol <- hotelling_2(Xt, Xs)
+signif(h_rol, 4)
+
+# Comprobación: R lo calcula con manova(); debe dar el mismo T2
+L <- summary(manova(X ~ base$rol), test = "Wilks")$stats[1, 2]
+T2_manova <- (nrow(base) - 2) * (1 / L - 1)
+c(T2_hotelling_2 = round(h_rol[["T2"]], 2), T2_manova = round(T2_manova, 2),
+  lambda_wilks = round(L, 4))
+```
+
+Titulares y suplentes están a **`r dec(h_rol[["D"]])` desviaciones**, contando las seis variables. Con `hotelling_2()` la probabilidad de que sea azar es `r azar(h_rol[["p"]])`, y la comprobación con `manova()` da el mismo resultado: un T² de `r dec(T2_manova, 1)` frente a `r dec(h_rol[["T2"]], 1)` de la función de las notas (lambda de Wilks de `r dec(L, 3)`). Es una distancia apreciable, cerca del doble de la de hombres y mujeres en las notas (0,49) y mayor que la del mercado 2022. Para usted, la diferencia entre titulares y suplentes existe, no es suerte de una muestra y tiene un tamaño que pesa a la hora de valorar a un jugador. Antes de pagarle a un suplente como titular, vale la pena ver si su perfil se parece al de los titulares. Falta saber si esa distancia alcanza para reconocer a cada jugador.
+
+## 3.3 ¿Separa?
+
+```{r dos-lda}
+clasif <- MASS::lda(base[vars], base$rol)
+pred   <- predict(clasif)
+acierto_rol <- mean(pred$class == base$rol)
+adivinar    <- max(table(base$rol)) / nrow(base)
+c(acierto_con_las_seis_variables = round(100 * acierto_rol, 1),
+  acierto_diciendo_siempre_suplente = round(100 * adivinar, 1))
+table(Real = base$rol, Clasificado = pred$class)
+```
+
+```{r dos-lda-graf, fig.height = 4.6}
+# El signo del puntaje es arbitrario: se fija para que alto = más parecido a un titular
+base$ld <- pred$x[, 1]
+if (mean(base$ld[base$rol == "Titular"]) < mean(base$ld[base$rol == "Suplente"])) base$ld <- -base$ld
+herro$ld  <- caso("Tyler Herro")$ld
+oneale$ld <- caso("Royce O'Neale")$ld
+ggplot(base, aes(ld, fill = rol, color = rol)) +
+  geom_density(alpha = 0.35, linewidth = 0.8) +
+  geom_vline(xintercept = c(herro$ld, oneale$ld), color = c(rojo, azul), linetype = "dashed") +
+  annotate("label", x = herro$ld, y = Inf, vjust = 1.3, label = "Herro (suplente)", color = rojo,
+           size = 3.5, fontface = "bold", label.size = 0) +
+  annotate("label", x = oneale$ld, y = Inf, vjust = 1.3, label = "O'Neale (titular)", color = azul,
+           size = 3.5, fontface = "bold", label.size = 0) +
+  scale_fill_manual(values = c(Titular = azul, Suplente = rojo), name = NULL) +
+  scale_color_manual(values = c(Titular = azul, Suplente = rojo), name = NULL) +
+  scale_x_continuous(labels = function(x) dec(x, 0)) +
+  labs(title = "Puntaje del análisis discriminante: titulares y suplentes",
+       subtitle = "Las dos curvas están corridas, pero comparten casi todo el terreno",
+       x = "Puntaje discriminante (más alto = más parecido a un titular)", y = NULL) +
+  theme(axis.text.y = element_blank())
+```
+
+Con las seis variables, el análisis discriminante acierta el rol en **`r pct(acierto_rol)` de cada 100** jugadores. Diciendo siempre "suplente", el grupo más grande, sin mirar ningún número, se acierta en `r pct(adivinar)`. Las estadísticas mejoran el acierto en `r dec(100 * (acierto_rol - adivinar), 1)` puntos: más que en el ejemplo de hombres y mujeres de las notas (5,7), pero lejos de una separación. `r num(sum(base$rol == "Titular" & pred$class == "Suplente"))` titulares quedan clasificados como suplentes, y Herro y O'Neale caen cada uno en el terreno del otro grupo. Para usted, los números de un jugador desplazan la probabilidad de que sea titular, pero no la deciden: dos de cada tres veces el perfil coincide con el rol, y una de cada tres no. No conviene usar el perfil estadístico para decidir quién es titular; sí sirve como primer filtro para encontrar suplentes con perfil de titular, como Herro, que pueden ser una oportunidad de mercado.
+
+# 4. ¿Qué viaja con el grupo?
+
+Escogemos la comparación de titulares y suplentes. La variable que viaja con el grupo son los **minutos por partido**: un titular juega más, y los jugadores con más minutos suelen tener más balón. La pregunta es si las ventajas de los titulares siguen cuando comparamos jugadores con los mismos minutos.
+
+```{r viaja-1}
+base <- base %>%
+  mutate(banda = cut(minutos_pp, c(0, 20, 25, 30, 50), right = FALSE,
+                     labels = c("Menos de 20", "20 a 25", "25 a 30", "30 o más")))
+
+rbind(minutos_por_partido = tapply(base$minutos_pp, base$rol, mean),
+      edad = tapply(base$edad, base$rol, mean)) %>% round(1)
+table(Banda = base$banda, Rol = base$rol)
+```
+
+Los titulares juegan en promedio `r dec(mean(base$minutos_pp[base$rol == "Titular"]), 1)` minutos por partido y los suplentes `r dec(mean(base$minutos_pp[base$rol == "Suplente"]), 1)`. La edad, en cambio, no viaja con el grupo: los dos promedian unos 26 años. Los minutos se reparten muy distinto, aunque en las bandas de 20 a 25 y de 25 a 30 minutos hay cientos de jugadores de cada rol, y ahí sí se pueden comparar casos parecidos.
+
+```{r viaja-2}
+por_banda <- lapply(levels(base$banda), function(b) {
+  i <- base$banda == b
+  A <- X[i & base$rol == "Titular", ]; B <- X[i & base$rol == "Suplente", ]
+  h <- hotelling_2(A, B)
+  d <- (colMeans(A) - colMeans(B)) / de_sp
+  list(resumen = tibble(Banda = b, Titulares = nrow(A), Suplentes = nrow(B), D = h[["D"]], p = h[["p"]]),
+       dif = tibble(Banda = b, var = vars, d = d))
+})
+resumen_banda <- bind_rows(lapply(por_banda, `[[`, "resumen"))
+dif_banda <- bind_rows(lapply(por_banda, `[[`, "dif")) %>%
+  bind_rows(tibble(Banda = "Todos", var = vars, d = dif_rol / de_sp), .) %>%
+  mutate(Banda = factor(Banda, levels = c("Todos", levels(base$banda))),
+         var = factor(etiquetas[var], levels = rev(etiquetas[vars])))
+
+resumen_banda %>%
+  bind_rows(tibble(Banda = "Todos", Titulares = nt, Suplentes = ns, D = h_rol[["D"]], p = h_rol[["p"]]), .) %>%
+  transmute(Banda, Titulares, Suplentes, `Distancia D` = dec(D),
+            `Probabilidad de azar` = sapply(p, azar)) %>%
+  kable(caption = "Titulares frente a suplentes, dentro de cada banda de minutos por partido", align = "lrrrl")
+```
+
+```{r viaja-graf, fig.height = 6.4}
+ggplot(dif_banda, aes(d, var, fill = d > 0)) +
+  geom_col(width = 0.65) +
+  geom_vline(xintercept = 0, color = "grey40") +
+  facet_wrap(~ Banda, nrow = 1) +
+  scale_fill_manual(values = c(`TRUE` = azul, `FALSE` = rojo), guide = "none") +
+  scale_x_continuous(labels = function(x) dec(x, 1), breaks = c(-0.5, 0, 0.5)) +
+  labs(title = "Titulares menos suplentes, con los mismos minutos por partido",
+       subtitle = "Azul: ventaja de los titulares · rojo: ventaja de los suplentes · en desviaciones",
+       x = "Diferencia en desviaciones", y = NULL) +
+  theme(strip.text = element_text(face = "bold"), panel.spacing = unit(1, "lines"))
+```
+
+```{r viaja-3}
+dif_banda %>%
+  filter(Banda %in% c("Todos", "20 a 25", "25 a 30"),
+         var %in% etiquetas[c("porc_uso_jugador", "porc_asistencias_equipo",
+                              "porc_intentos_triple", "porc_rebotes_tot_disp")]) %>%
+  mutate(d = dec(d)) %>%
+  pivot_wider(names_from = Banda, values_from = d) %>%
+  rename(Variable = var) %>%
+  kable(caption = "Diferencias titular menos suplente (en desviaciones) en las bandas con muchos casos de ambos roles",
+        align = "lrrr")
+```
+
+Al comparar jugadores con los mismos minutos, la diferencia cambia de forma. La ventaja de los titulares en uso y asistencias, que era la más grande del total, se achica o se da vuelta: entre los que juegan de 25 a 30 minutos, el uso queda prácticamente igual y las asistencias también. Lo que sí se mantiene en todas las bandas es otra cosa: con los mismos minutos, los titulares tiran menos de tres y toman más rebotes. La distancia entre los grupos sigue siendo apreciable dentro de cada banda (entre `r dec(min(resumen_banda$D))` y `r dec(max(resumen_banda$D))`), pero ya no es una diferencia de nivel sino de **perfil**: el titular con los mismos minutos que un suplente tiende a ser más interior. Las bandas extremas tienen pocos casos de uno de los dos roles (`r resumen_banda$Titulares[1]` titulares con menos de 20 minutos y `r resumen_banda$Suplentes[4]` suplentes con 30 o más), así que esas columnas hay que leerlas con cuidado.
+
+Para usted, buena parte de lo que separa a titulares de suplentes en uso y asistencias viaja con los minutos, y no hay que leerlo como una cualidad del jugador. La ventaja de balón del titular promedio va de la mano con sus minutos, y con estos datos no se puede afirmar que sea mejor creador que un suplente que juega lo mismo. Lo que queda, con los mismos minutos, es que los equipos tienden a poner de titular a perfiles más interiores y a dejar a los tiradores exteriores en la banca. Antes de pagar por el uso o las asistencias de un titular, compárelo con suplentes de minutos parecidos. Y si busca un suplente para subir al quinteto, compare su uso y asistencias con los titulares de su misma banda: Herro, con `r dec(herro$minutos_pp, 1)` minutos por partido, usó el `r dec(herro$porc_uso_jugador, 1)` % de las jugadas cuando los titulares de 30 minutos o más promedian `r dec(mean(base$porc_uso_jugador[base$rol == "Titular" & base$banda == "30 o más"]), 1)` %, y ese es el tipo de suplente que muestra algo que los titulares de sus minutos no tienen.
+
+# 5. Las tres preguntas y la decisión
+
+```{r tabla-final}
+ir <- droplevels(iris[iris$Species != "virginica", ])
+h_iris <- hotelling_2(as.matrix(ir[ir$Species == "versicolor", 1:4]),
+                      as.matrix(ir[ir$Species == "setosa", 1:4]))
+acierto_iris <- mean(predict(MASS::lda(ir[1:4], ir$Species))$class == ir$Species)
+
+tibble(
+  `Comparación` = c("Mercado 2022 frente a 2015-2021 (una muestra)",
+                    "Titulares frente a suplentes (dos muestras)",
+                    "Setosa frente a versicolor (iris, referencia)"),
+  `¿Es real?` = c(paste("Sí: probabilidad de azar", azar(h_22[["p"]])),
+                  paste("Sí: probabilidad de azar", azar(h_rol[["p"]]), "(confirmado con manova)"),
+                  paste("Sí: probabilidad de azar", azar(h_iris[["p"]]))),
+  `¿Es grande? (D)` = c(paste0(dec(h_22[["D"]]), " · moderada"),
+                        paste0(dec(h_rol[["D"]]), " · apreciable"),
+                        paste0(dec(h_iris[["D"]]), " · enorme")),
+  `¿Separa?` = c(paste0("No: ", pct(abajo_22), " de cada 100 de 2022 quedan bajo la mediana de 2015-2021"),
+                 paste0("No: acierto de ", pct(acierto_rol), " contra ", pct(adivinar), " adivinando «suplente»"),
+                 paste0("Sí: acierto de ", pct(acierto_iris, 0), " de cada 100"))
+) %>% kable(caption = "Las tres preguntas para las dos comparaciones")
+```
+
+Las tres diferencias son reales, así que "es real" no distingue nada entre ellas: lo que las distingue es el tamaño y la separación. El mercado 2022 está a `r dec(h_22[["D"]])` desviaciones de 2015-2021 y titulares y suplentes a `r dec(h_rol[["D"]])`, mientras que dos especies de flor que no se tocan están a `r dec(h_iris[["D"]])`. Ninguna de nuestras dos comparaciones separa a los jugadores: las dos desplazan los grupos, y en ambas hay una buena parte de jugadores que se parecen más al otro grupo que al propio.
+
+::: {.recuadro}
+### La decisión para el GM
+
+Recalcule con datos de 2022 las referencias con que su equipo juzga a un candidato, porque el mercado se corrió de forma real y moderada (`r dec(h_22[["D"]])` desviaciones) hacia más triple y mejor eficiencia, y una eficiencia que antes era promedio hoy queda por debajo. Ese corrimiento no separa a los jugadores, así que no descarte a nadie solo por tener un perfil "de antes": una cuarta parte del mercado juega así, y DeRozan es uno de ellos. Entre titulares y suplentes la distancia es mayor (`r dec(h_rol[["D"]])`), pero el perfil acierta el rol apenas `r dec(100 * (acierto_rol - adivinar), 1)` puntos más que adivinar y la ventaja de uso y asistencias de los titulares viaja con los minutos. Por eso, no pague el rótulo de titular: compare a cada candidato con jugadores de minutos parecidos y busque en la banca a suplentes que, como Herro, superan en uso y creación a los titulares de sus mismos minutos.
+:::
+
+### Qué no dice esta comparación
+
+- **No dice por qué.** Que los titulares tengan más uso no quiere decir que el puesto de titular cause ese uso, ni al revés. Vimos que los minutos viajan con el grupo, y puede haber otras variables (el sistema del entrenador, el contrato, las lesiones del titular original) que no están en la base.
+- **No dice nada de un jugador en particular.** Compara promedios. Un jugador concreto, como DeRozan o O'Neale, puede estar del otro lado de su grupo.
+- **No es más importante por ser "más real".** Con casi `r num(round(nrow(base), -2))` casos, hasta diferencias pequeñas salen reales. Lo que pesa es la distancia y la separación.
+- **Los casos no son independientes.** Un mismo jugador aparece en varias temporadas y a veces en los dos roles, así que las probabilidades de azar son algo optimistas. Las distancias y los aciertos no dependen de eso.
+- **El acierto se mide sobre los mismos datos con que se ajustó la regla.** Con jugadores nuevos, el acierto de `MASS::lda()` sería igual o un poco menor, lo que refuerza que el rol no se separa.
+- **La referencia es nuestra.** El promedio de 2015-2021 sale de nuestra base filtrada (desde 2015 y 500 minutos), no de una cifra oficial de la NBA.
