@@ -1,0 +1,593 @@
+---
+title: "Normal multivariante, distancia de Mahalanobis y gráfico Q-Q · NBA"
+subtitle: "Estadística Multidimensional - 26158 · grupo 020-81"
+author:
+  - "Andrey Camilo Gonzalez Caceres · 20231020070"
+  - "Julian David Pulido Carreño · 20231020064"
+  - "David Martínez Rincón · 20222020167"
+date: "`r paste(as.integer(format(Sys.Date(), '%d')), 'de', c('enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre')[as.integer(format(Sys.Date(), '%m'))], 'de', format(Sys.Date(), '%Y'))`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: false
+    theme: flatly
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 9, fig.height = 5.5, fig.align = "center")
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggrepel)
+library(knitr)
+
+theme_set(theme_minimal(base_size = 12))
+
+dec <- function(x, d = 2) format(round(x, d), nsmall = d, decimal.mark = ",", big.mark = ".")
+pct <- function(x, d = 1) dec(100 * x, d)
+num <- function(x) format(x, big.mark = ".", decimal.mark = ",")
+```
+
+# La pregunta
+
+En los talleres anteriores revisamos la base del GM columna por columna y después la resumimos con
+componentes y factores. Antes de seguir confiando en esos resúmenes falta una pregunta:
+
+> **¿Hay jugadores raros en la combinación de sus estadísticas, aunque ninguna por separado sea
+> extrema? ¿Y qué hacemos con ellos?**
+
+Al GM le importa por dos lados. Un perfil raro puede ser un error en la base, que habría que
+corregir antes de cualquier análisis, o puede ser un jugador poco común, que es justo lo que un
+departamento de scouting quiere encontrar.
+
+# La base
+
+```{r datos}
+# Misma base de los talleres: 2015-2022, al menos 500 minutos, filas TOT incluidas
+# (en esta base el jugador traspasado solo aparece en su fila TOT).
+nba <- read.csv("NBA_espanol.csv", fileEncoding = "UTF-8")
+
+vars <- c("minutos_pp", "porc_uso_jugador", "porc_tiro_verdadero",
+          "porc_intentos_triple", "razon_libres_intentos",
+          "porc_asistencias_equipo", "porc_rebotes_of_disp",
+          "porc_rebotes_def_disp", "porc_tapones_equipo", "porc_robos_equipo")
+
+etiqueta <- c(minutos_pp = "Minutos/partido", porc_uso_jugador = "Uso",
+              porc_tiro_verdadero = "TS%", porc_intentos_triple = "% triples",
+              razon_libres_intentos = "Ataque al aro (FTr)", porc_asistencias_equipo = "Asistencias",
+              porc_rebotes_of_disp = "Rebote of.", porc_rebotes_def_disp = "Rebote def.",
+              porc_tapones_equipo = "Tapones", porc_robos_equipo = "Robos")
+
+recientes <- nba %>% filter(temporada >= 2015)
+base <- recientes %>%
+  filter(minutos_totales >= 500) %>%
+  mutate(posicion = sub("-.*", "", posicion))
+
+completos <- complete.cases(base[vars])
+base <- base[completos, ]
+excluidos <- recientes %>% filter(minutos_totales < 500)
+
+tibble(`Filas 2015-2022` = nrow(recientes),
+       `Con 500 minutos o más` = nrow(base) + sum(!completos),
+       `Con las 10 variables` = nrow(base),
+       `Quedan por fuera` = nrow(recientes) - nrow(base)) %>%
+  kable()
+
+X <- as.matrix(base[vars])
+n <- nrow(X); p <- ncol(X)
+```
+
+**Describir.** De las `r num(nrow(recientes))` filas de 2015 a 2022 nos quedamos con `r num(n)`, que
+tienen al menos 500 minutos y las 10 variables completas. Las `r num(nrow(excluidos))` que quedan por
+fuera son jugadores con menos de 500 minutos.
+
+**Analizar.** Esos jugadores no son un detalle técnico: son el grupo con menos minutos de la liga. Al
+final los revisamos aparte para ver qué tan distintos son. **Decisión:** trabajamos con los
+`r num(n)` y dejamos a los demás a la vista.
+
+```{r escala}
+data.frame(Variable = etiqueta[vars],
+           Media = dec(colMeans(X), 3), `Desviación` = dec(apply(X, 2, sd), 3),
+           check.names = FALSE, row.names = NULL) %>%
+  kable(caption = "Media y desviación de cada variable")
+```
+
+A diferencia de la prueba Saber, nuestras variables **no están en la misma escala**: hay minutos,
+porcentajes de 0 a 100 y proporciones de 0 a 1. Eso no le molesta a Mahalanobis, porque ella misma
+mide en desviaciones (es uno de sus dos ajustes, ver más abajo). Pero sí afecta a la distancia
+euclidiana: para compararla tenemos que estandarizar primero, o los minutos y las asistencias se
+llevarían toda la distancia.
+
+# Variable por variable no alcanza
+
+## La revisión de siempre
+
+```{r univariado}
+Z <- scale(X)
+extremo_uni <- apply(abs(Z) > 3, 1, any)
+c(con_alguna_variable_extrema = sum(extremo_uni), porcentaje = round(100 * mean(extremo_uni), 2))
+```
+
+**Describir.** `r sum(extremo_uni)` jugadores-temporada (`r pct(mean(extremo_uni))` %) tienen al menos
+una estadística a más de tres desviaciones del promedio.
+
+**Analizar.** Esta revisión mira una columna a la vez y no puede preguntar si la *combinación* tiene
+sentido. **Decisión:** antes de darla por buena la ponemos a prueba en un plano donde sí se ve la
+combinación.
+
+## El plano: rebote ofensivo y % de triples
+
+```{r cor-plano}
+r_plano <- cor(base$porc_rebotes_of_disp, base$porc_intentos_triple)
+```
+
+Escogimos estas dos porque van en contra: el que pelea el rebote ofensivo casi no tira de tres, y el
+que tira de tres casi no va al rebote. Su correlación es `r dec(r_plano, 3)`.
+
+```{r conteo-plano}
+P <- as.matrix(base[c("porc_rebotes_of_disp", "porc_intentos_triple")])
+d_par <- mahalanobis(P, colMeans(P), cov(P))
+fuera_elipse <- d_par > qchisq(0.95, df = 2)
+nota_extrema <- abs(Z[, "porc_rebotes_of_disp"]) > 2 | abs(Z[, "porc_intentos_triple"]) > 2
+
+data.frame(
+  `Situación` = c("Fuera de la elipse, con las dos variables dentro de ±2 desviaciones",
+                  "Dentro de la elipse, con una variable fuera de ±2 desviaciones",
+                  "Fuera de la elipse (total)"),
+  Jugadores = c(sum(fuera_elipse & !nota_extrema), sum(!fuera_elipse & nota_extrema),
+                sum(fuera_elipse)), check.names = FALSE) %>%
+  kable()
+
+# El caso de 2022 más lejos de la elipse sin tener ninguna de las dos variables extrema
+ocultos <- base %>% mutate(d_par = d_par) %>%
+  filter(fuera_elipse & !nota_extrema) %>% arrange(desc(d_par))
+caso <- ocultos %>% filter(temporada == 2022) %>% slice(1)
+pct_orb <- mean(base$porc_rebotes_of_disp <= caso$porc_rebotes_of_disp)
+pct_tri <- mean(base$porc_intentos_triple <= caso$porc_intentos_triple)
+```
+
+```{r elipse, fig.height = 6.5}
+lim <- function(v, k) mean(base[[v]]) + k * sd(base[[v]])
+
+ggplot(base, aes(porc_rebotes_of_disp, porc_intentos_triple)) +
+  geom_point(alpha = 0.2, size = 0.8, color = "grey30") +
+  stat_ellipse(type = "norm", level = 0.95, color = "firebrick", linewidth = 1.1) +
+  geom_vline(xintercept = c(lim("porc_rebotes_of_disp", -2), lim("porc_rebotes_of_disp", 2)),
+             linetype = "dashed", color = "steelblue") +
+  geom_hline(yintercept = c(lim("porc_intentos_triple", -2), lim("porc_intentos_triple", 2)),
+             linetype = "dashed", color = "steelblue") +
+  geom_point(data = ocultos, color = "darkorange", size = 1.8) +
+  geom_point(data = caso, color = "darkorange", size = 4.5) +
+  geom_label_repel(data = caso, aes(label = paste(jugador, temporada)), color = "darkorange",
+                   fontface = "bold", nudge_x = 3, nudge_y = 0.15, seed = 1) +
+  labs(title = "Rebote ofensivo y % de triples: la elipse del 95 % y las bandas de ±2 desviaciones",
+       subtitle = "En naranja, los que quedan fuera de la elipse sin tener ninguna de las dos variables extrema",
+       x = "Rebote ofensivo (ORB%)", y = "% de tiros que son de triple")
+```
+
+**Describir.** `r sum(fuera_elipse & !nota_extrema)` jugadores quedan fuera de la elipse con las dos
+variables dentro de las bandas; al revés, `r sum(!fuera_elipse & nota_extrema)` tienen una variable
+fuera de las bandas pero quedan dentro de la elipse. El caso marcado es **`r caso$jugador`** en
+`r caso$temporada`: `r dec(caso$porc_rebotes_of_disp, 1)` de rebote ofensivo (percentil
+`r round(100 * pct_orb)`) y el `r round(100 * caso$porc_intentos_triple)` % de sus tiros de triple
+(percentil `r round(100 * pct_tri)`). Ninguna de las dos es extrema.
+
+**Analizar.** Las dos revisiones no señalan a la misma gente:
+
+- Los **`r sum(fuera_elipse & !nota_extrema)`** son perfiles que la revisión por columnas no ve. Hay
+  dos tipos: pívots que rebotean y además tiran mucho de tres, como `r caso$jugador`, y exteriores que
+  ni rebotean ni tiran de tres, que viven del tiro de media distancia.
+- Los **`r sum(!fuera_elipse & nota_extrema)`** son falsas alarmas: pívots con mucho rebote y cero
+  triples, o tiradores puros sin rebote. Son extremos, pero coherentes con lo que hace la base.
+
+Hay un detalle más en el gráfico: la elipse se mete en valores negativos, que no existen. El % de
+triples tiene piso en 0 y el rebote ofensivo está cargado a la izquierda, así que estas variables no
+tienen forma de campana. Lo vamos a ver otra vez en el Q-Q.
+
+**Decisión:** para buscar perfiles raros necesitamos una medida que mire las variables juntas.
+
+# La distancia de Mahalanobis, en palabras
+
+La distancia euclidiana mide qué tan lejos está un jugador del promedio, tratando a las variables como
+si fueran independientes. La de Mahalanobis hace dos ajustes antes de medir:
+
+| Ajuste | Qué hace | En nuestra base |
+|---|---|---|
+| **Por la escala** | Cuenta en desviaciones, no en unidades | 5 puntos de asistencias no valen lo mismo que 0,05 de TS% |
+| **Por la compañía** | Descuenta lo que las variables ya comparten | Rebote ofensivo, defensivo y tapones van juntos: estar alto en los tres es *un* rasgo, no tres |
+
+En una frase: **mide qué tan lejos está un jugador del centro, teniendo en cuenta que las variables van
+juntas.**
+
+## Las dos distancias sobre los mismos jugadores
+
+```{r dos-distancias}
+mu <- colMeans(X)
+base$d2 <- mahalanobis(X, mu, cov(X))
+base$euclid <- sqrt(rowSums(Z^2))     # euclidiana sobre variables estandarizadas
+
+raros <- base$d2 > qchisq(0.99, df = p)
+k <- sum(raros)
+coinciden <- length(intersect(order(base$euclid, decreasing = TRUE)[1:k],
+                              order(base$d2, decreasing = TRUE)[1:k]))
+r_dist <- cor(base$euclid, sqrt(base$d2))
+
+base <- base %>% mutate(puesto_euclid = rank(-euclid), puesto_maha = rank(-d2))
+m22 <- base %>% filter(temporada == 2022)
+coherente <- m22 %>% filter(puesto_euclid <= 30) %>% arrange(desc(puesto_maha)) %>% slice(1)
+disparejo <- m22 %>% filter(puesto_maha <= 700) %>% arrange(desc(puesto_euclid)) %>% slice(1)
+
+bind_rows(coherente, disparejo) %>%
+  transmute(Jugador = jugador, `Posición` = posicion,
+            `Rebote of.` = porc_rebotes_of_disp, `Rebote def.` = porc_rebotes_def_disp,
+            Tapones = porc_tapones_equipo, `% triples` = porc_intentos_triple,
+            Uso = porc_uso_jugador, Asistencias = porc_asistencias_equipo,
+            Euclidiana = dec(euclid, 1), `Puesto euclid.` = puesto_euclid,
+            Mahalanobis = dec(d2, 1), `Puesto Mahal.` = puesto_maha) %>%
+  kable(caption = paste("Dos jugadores de 2022, con su puesto entre los", num(n), "casos"))
+```
+
+**Describir.** Las dos distancias se correlacionan `r dec(r_dist, 3)`, pero de los `r k` jugadores más
+lejanos según cada una solo `r coinciden` son los mismos. **`r coherente$jugador`** está en el puesto
+`r coherente$puesto_euclid` por distancia euclidiana y baja al `r coherente$puesto_maha` con
+Mahalanobis. **`r disparejo$jugador`** hace el camino contrario: puesto
+`r num(disparejo$puesto_euclid)` en euclidiana y `r disparejo$puesto_maha` en Mahalanobis.
+
+**Analizar.** `r coherente$jugador` está lejos del promedio porque rebotea y tapona muchísimo y no
+tira de tres, pero eso es lo que hace un pívot clásico: su perfil es extremo y coherente.
+`r disparejo$jugador` tiene números corrientes, pero en una combinación que la base produce poco. Por
+eso Mahalanobis lo sube. **Decisión:** para buscar perfiles raros usamos Mahalanobis. La euclidiana
+solo encontraría a los más extremos, y eso ya lo sabíamos.
+
+# Las distancias de las 10 variables
+
+Si las 10 variables fueran una campana multivariante, las distancias se repartirían como una
+chi-cuadrado con `r p` grados de libertad, uno por variable. Eso da los cortes:
+
+```{r cortes}
+cortes <- qchisq(c(0.95, 0.99, 0.999), df = p)
+obs <- sapply(cortes, function(q) sum(base$d2 > q))
+data.frame(Corte = c("95 %", "99 %", "99,9 %"),
+           `Valor de la distancia` = dec(cortes),
+           `Esperados por encima` = c("5 %", "1 %", "0,1 %"),
+           Observados = obs,
+           `Observados (%)` = paste(pct(obs / n, 2), "%"),
+           check.names = FALSE) %>%
+  kable()
+```
+
+```{r hist-d2, fig.height = 4.5}
+ggplot(base, aes(d2)) +
+  geom_histogram(aes(y = after_stat(density)), bins = 70, fill = "steelblue", color = "white") +
+  stat_function(fun = dchisq, args = list(df = p), color = "firebrick", linewidth = 1.1) +
+  geom_vline(xintercept = cortes[2], linetype = "dashed") +
+  annotate("text", x = cortes[2] + 2, y = 0.08, hjust = 0,
+           label = paste("corte del 99 %:", dec(cortes[2]))) +
+  coord_cartesian(xlim = c(0, 60)) +
+  labs(title = paste("Distancias de Mahalanobis de los", num(n), "jugadores-temporada"),
+       subtitle = paste("En rojo, la chi-cuadrado con", p, "grados de libertad (el eje se corta en 60)"),
+       x = "Distancia de Mahalanobis (al cuadrado)", y = "Densidad")
+```
+
+**Describir.** La mediana de las distancias es `r dec(median(base$d2))` y el máximo
+`r dec(max(base$d2))`. Por encima del corte del 99 % hay **`r obs[2]` jugadores
+(`r pct(obs[2] / n, 2)` %)** donde se esperaba 1 %, y por encima del 99,9 % hay **`r obs[3]`
+(`r pct(obs[3] / n, 2)` %)** donde se esperaba 0,1 %.
+
+**Analizar.** La cola es mucho más gruesa que en la prueba Saber: hay `r round(obs[3] / (0.001 * n))`
+veces más jugadores muy lejanos de los que daría una campana. Además el histograma está corrido a la
+izquierda de la curva roja en el centro. Eso sugiere que no solo hay casos raros: algo en la forma de
+las variables también está pesando. **Decisión:** los `r k` que pasan el corte del 99 % son la lista a
+revisar, y el Q-Q nos dice si el problema es solo la cola o algo más.
+
+# El gráfico Q-Q
+
+```{r qq, fig.height = 6}
+qq <- data.frame(teorica = qchisq(ppoints(n), df = p), observada = sort(base$d2))
+
+ggplot(qq, aes(teorica, observada)) +
+  geom_point(alpha = 0.35, size = 0.9, color = "steelblue") +
+  geom_abline(slope = 1, intercept = 0, color = "firebrick", linewidth = 1) +
+  geom_vline(xintercept = qchisq(0.99, p), linetype = "dashed") +
+  labs(title = paste("Q-Q de las distancias contra la chi-cuadrado con", p, "grados de libertad"),
+       subtitle = "Si las 10 variables fueran una campana multivariante, los puntos caerían sobre la recta",
+       x = "Distancia que debería tener", y = "Distancia que tiene")
+```
+
+```{r qq-tabla}
+probs <- c(0.50, 0.75, 0.90, 0.95, 0.99, 0.999)
+data.frame(Percentil = c("50 %", "75 %", "90 %", "95 %", "99 %", "99,9 %"),
+           Observada = dec(quantile(base$d2, probs)),
+           `Teórica` = dec(qchisq(probs, p)), check.names = FALSE, row.names = NULL) %>%
+  kable()
+q_obs <- quantile(base$d2, probs); q_teo <- qchisq(probs, p)
+```
+
+**Describir.** Hasta el percentil 75 los puntos van un poco por **debajo** de la recta (mediana
+`r dec(q_obs[1])` contra `r dec(q_teo[1])` esperada). Desde ahí se despegan hacia arriba cada vez más:
+en el percentil 99 la distancia observada es `r dec(q_obs[5])` contra `r dec(q_teo[5])`, y en el 99,9
+es `r dec(q_obs[6])` contra `r dec(q_teo[6])`.
+
+**Analizar.** No es el caso de la clase, donde la línea seguía la recta y solo se despegaba la cola.
+Aquí la línea se curva desde el centro: el grueso de jugadores queda más cerca del centro de lo
+esperado y la cola mucho más lejos. Esa forma es la de **variables torcidas**, la segunda fila de la
+tabla de la clase. **Decisión:** revisamos qué variables están torcidas y probamos si transformarlas
+cambia el diagnóstico.
+
+## ¿Qué variables están torcidas?
+
+```{r asimetria}
+asim <- function(x) mean((x - mean(x))^3) / sd(x)^3
+asimetrias <- sapply(base[vars], asim)
+data.frame(Variable = etiqueta[vars], `Asimetría` = dec(asimetrias),
+           check.names = FALSE, row.names = NULL) %>%
+  arrange(desc(asimetrias)) %>% kable()
+torcidas <- names(sort(asimetrias, decreasing = TRUE))[1:4]
+```
+
+```{r mardia}
+# Prueba de Mardia calculada a mano (asimetría y curtosis multivariante)
+mardia <- function(M) {
+  n <- nrow(M); p <- ncol(M)
+  C <- scale(M, scale = FALSE)
+  S <- crossprod(C) / n
+  G <- C %*% solve(S) %*% t(C)
+  b1 <- sum(G^3) / n^2
+  b2 <- mean(diag(G)^2)
+  c(asimetria_p = pchisq(n * b1 / 6, df = p * (p + 1) * (p + 2) / 6, lower.tail = FALSE),
+    curtosis_z  = (b2 - p * (p + 2)) / sqrt(8 * p * (p + 2) / n))
+}
+set.seed(1)
+m_mardia <- mardia(X[sample(n, 2000), ])
+m_mardia
+```
+
+**Describir.** Las cuatro más torcidas son `r paste(etiqueta[torcidas], collapse = ", ")`, con
+asimetrías entre `r dec(asimetrias[torcidas[4]])` y `r dec(asimetrias[torcidas[1]])`. Las demás
+quedan por debajo de `r dec(sort(asimetrias, decreasing = TRUE)[5])`. La prueba de Mardia, sobre 2.000
+casos al azar, rechaza la normalidad multivariante (p-valor de asimetría
+`r if (m_mardia[1] < 0.001) "menor que 0,001" else dec(m_mardia[1], 3)` y curtosis con z = `r dec(m_mardia[2], 1)`).
+
+**Analizar.** El rechazo era de esperar con tantos datos, como en la clase. Lo que dice más es la
+lista: tapones, ataque al aro, asistencias y rebote ofensivo tienen la misma forma, muchos jugadores
+con valores bajos y pocos especialistas con valores altísimos. Son estadísticas de **especialista**:
+el pívot que tapona o el base que reparte se separan mucho del resto. **Decisión:** probamos con el
+logaritmo de esas cuatro.
+
+## Probando con logaritmo
+
+```{r log}
+base_log <- base
+for (v in torcidas) base_log[[v]] <- log1p(base[[v]] * ifelse(v == "razon_libres_intentos", 100, 1))
+XL <- as.matrix(base_log[vars])
+d2_log <- mahalanobis(XL, colMeans(XL), cov(XL))
+raros_log <- d2_log > qchisq(0.99, p)
+
+data.frame(`Versión` = c("Variables originales", "Con logaritmo en las cuatro torcidas"),
+           `Por encima del 99 %` = c(k, sum(raros_log)),
+           `Percentil 99,9 de la distancia` = dec(c(q_obs[6], quantile(d2_log, 0.999))),
+           `Teórico` = dec(q_teo[6]),
+           check.names = FALSE) %>% kable()
+en_ambas <- sum(raros & raros_log)
+```
+
+**Describir.** Con el logaritmo, los casos por encima del 99 % bajan de `r k` a `r sum(raros_log)`.
+De esos `r sum(raros_log)`, `r en_ambas` ya estaban en la lista original.
+
+**Analizar.** Cerca de la mitad del exceso venía de la forma torcida de esas cuatro variables y no de
+jugadores raros. Pero aun transformando quedan `r sum(raros_log)`, que sigue siendo más del doble de
+lo esperado: la cola gruesa es real. **Decisión:** para las técnicas que suponen campana conviene
+tener en cuenta esta torcedura. Para la lista del GM seguimos con las variables originales, que se
+leen directo, sabiendo que parte de la lista son especialistas que el logaritmo acercaría al resto.
+
+# Quiénes son los raros
+
+## La revisión de siempre los habría encontrado casi todos
+
+```{r cruce}
+table(`Alguna variable extrema` = extremo_uni, `Raro en la combinación` = raros)
+solo_combinacion <- sum(raros & !extremo_uni)
+```
+
+**Describir.** De los `r k` raros, solo **`r solo_combinacion`** no tienen ninguna variable a más de
+tres desviaciones. Y de los `r sum(extremo_uni)` con alguna variable extrema,
+`r sum(extremo_uni & !raros)` no son raros en la combinación.
+
+**Analizar.** Esto es al revés de la prueba Saber, donde cuatro de cada cinco raros eran invisibles
+por columnas. En la NBA, la rareza casi siempre viene de una estadística muy alta: el jugador es un
+especialista. Aun así la revisión por columnas comete los dos errores: se le escapan
+`r solo_combinacion` y da `r sum(extremo_uni & !raros)` falsas alarmas. **Decisión:** usamos
+Mahalanobis, pero en esta base la rareza tiene otra cara que en la clase.
+
+## Qué tienen en común: son especialistas, casi siempre interiores
+
+```{r perfil}
+data.frame(Variable = etiqueta[vars],
+           Raros = dec(colMeans(abs(Z[raros, ]))), Resto = dec(colMeans(abs(Z[!raros, ]))),
+           check.names = FALSE, row.names = NULL) %>%
+  kable(caption = "Distancia media al promedio en cada variable, en desviaciones")
+
+pos_raros <- round(100 * prop.table(table(factor(base$posicion[raros], levels = c("PG","SG","SF","PF","C")))), 1)
+pos_resto <- round(100 * prop.table(table(factor(base$posicion[!raros], levels = c("PG","SG","SF","PF","C")))), 1)
+rbind(`Raros (%)` = pos_raros, `Resto (%)` = pos_resto) %>% kable(caption = "Posición")
+
+vorp <- c(raros = median(base$valor_sobre_reemplazo[raros]),
+          resto = median(base$valor_sobre_reemplazo[!raros]))
+por_temp <- tapply(raros, base$temporada, mean)
+```
+
+```{r perfiles-grafico, fig.height = 5.5}
+tipico <- data.frame(variable = factor(etiqueta[vars], levels = etiqueta[vars]), z = 0)
+set.seed(7)
+elegidos <- sample(which(raros), 25)
+data.frame(fila = rep(elegidos, each = p),
+           variable = factor(rep(etiqueta[vars], length(elegidos)), levels = etiqueta[vars]),
+           z = as.vector(t(Z[elegidos, ]))) %>%
+  ggplot(aes(variable, z, group = fila)) +
+  geom_line(alpha = 0.45, color = "firebrick") +
+  geom_line(data = tipico, aes(group = 1), color = "black", linewidth = 1.6) +
+  labs(title = "El perfil de 25 raros, contra el jugador promedio (línea negra)",
+       subtitle = "En desviaciones de cada variable: lo que los hace raros son picos en una o dos estadísticas",
+       x = NULL, y = "Desviaciones del promedio") +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+```
+
+**Describir.** Donde más se separan los raros del resto es en tapones
+(`r dec(mean(abs(Z[raros, "porc_tapones_equipo"])))` desviaciones contra
+`r dec(mean(abs(Z[!raros, "porc_tapones_equipo"])))`), ataque al aro y rebote ofensivo. El
+`r dec(pos_raros["C"], 1)` % de los raros son pívots, cuando en el resto son el `r dec(pos_resto["C"], 1)` %. Su VORP
+mediano es `r dec(vorp["raros"], 1)` contra `r dec(vorp["resto"], 1)` del resto. Por temporada, la
+proporción de raros va de `r pct(min(por_temp))` % a `r pct(max(por_temp))` %.
+
+**Analizar.** Ser raro aquí es ser **especialista**, sobre todo interior: el pívot que tapona, el que
+vive en la línea de libres o el que se lleva todos los rebotes. No es ser malo; su VORP mediano es más
+alto que el del resto, y en la lista están Jokić, Embiid y Antetokounmpo. Y no es un problema de una
+temporada: aparecen en todos los años con proporciones parecidas. **Decisión:** al reportarlos no los
+llamamos "los mejores" ni "los peores", sino **perfiles de especialista**.
+
+## Los traspasados no son raros
+
+```{r tot}
+tot <- base$equipo == "TOT"
+c(raros_entre_traspasados_pct = round(100 * mean(raros[tot]), 1),
+  raros_en_el_resto_pct = round(100 * mean(raros[!tot]), 1))
+```
+
+**Describir.** Entre los `r sum(tot)` jugadores-temporada traspasados (filas TOT) hay un
+`r pct(mean(raros[tot]))` % de raros, contra `r pct(mean(raros[!tot]))` % en el resto.
+
+**Analizar.** Las filas TOT, que en el primer corte habíamos quitado, no se comportan distinto. Es
+otra confirmación de que dejarlas fue la decisión correcta. **Decisión:** se quedan.
+
+## Los cinco más lejanos
+
+```{r top5}
+top5 <- base %>% arrange(desc(d2)) %>% slice(1:5)
+top5 %>%
+  transmute(Temporada = temporada, Jugador = jugador, `Posición` = posicion,
+            Minutos = minutos_totales, `Ataque al aro` = razon_libres_intentos,
+            `Rebote of.` = porc_rebotes_of_disp, `Rebote def.` = porc_rebotes_def_disp,
+            Tapones = porc_tapones_equipo, `% triples` = porc_intentos_triple,
+            Mahalanobis = dec(d2, 1)) %>%
+  kable()
+
+# ¿Hay valores imposibles?
+rangos <- data.frame(Variable = etiqueta[vars], `Mínimo` = apply(X, 2, min),
+                     `Máximo` = apply(X, 2, max), check.names = FALSE, row.names = NULL)
+```
+
+**Describir.** El más lejano es **`r top5$jugador[1]` en `r top5$temporada[1]`**, con distancia
+`r dec(top5$d2[1], 1)`: provocaba `r dec(top5$razon_libres_intentos[1], 2)` tiros libres por cada tiro
+de campo y tenía `r dec(top5$porc_rebotes_def_disp[1], 1)` de rebote defensivo. Los otros cuatro
+(`r paste(top5$jugador[2:5], collapse = ", ")`) también son pívots con tapones, rebote o ataque al aro
+muy por encima del resto.
+
+**Analizar.** Ninguno es un error de digitación. Revisamos los mínimos y máximos de las 10 variables y
+todos son posibles en baloncesto (el TS% va de `r dec(min(X[, "porc_tiro_verdadero"]), 3)` a
+`r dec(max(X[, "porc_tiro_verdadero"]), 3)`, por ejemplo). Lo de `r top5$jugador[1]` es real: en esas
+temporadas los rivales le hacían falta a propósito para mandarlo a la línea, porque fallaba muchos
+libres. Ese tipo de cosas son las que una revisión por columnas marca como "dato raro" sin poder
+decir si es error o realidad. **Decisión:** los cinco son atípicos reales y se dejan.
+
+## El piso de la escala: los que no tiran de tres
+
+En la clase, los 200 eran un tope de la escala. Aquí hay un piso: jugadores con **0 %** de tiros de
+triple.
+
+```{r piso}
+piso <- base$porc_intentos_triple == 0
+c(con_cero_triples = sum(piso), de_esos_son_raros = sum(piso & raros),
+  distancia_media_de_ellos = round(mean(base$d2[piso]), 1))
+```
+
+**Describir.** `r sum(piso)` jugadores-temporada no tiraron ningún triple, y `r sum(piso & raros)` de
+ellos están entre los raros, con distancia media `r dec(mean(base$d2[piso]), 1)`.
+
+**Analizar.** El cero no dice cuánto se aleja ese jugador del triple: dice que no tira. Varios
+jugadores distintos quedan en el mismo punto. No es un error, pero empuja a esos pívots hacia la cola.
+**Decisión:** se marcan como *piso de escala* y se dejan.
+
+## Los que quedaron por fuera
+
+Medimos a los `r num(nrow(excluidos))` jugadores con menos de 500 minutos con la misma regla (el
+centro y la forma de la base final):
+
+```{r excluidos}
+ex <- excluidos[complete.cases(excluidos[vars]), ]
+d2_ex <- mahalanobis(as.matrix(ex[vars]), mu, cov(X))
+c(jugadores = nrow(ex),
+  distancia_media_excluidos = round(mean(d2_ex), 1),
+  distancia_media_base = round(mean(base$d2), 1),
+  pasan_el_corte_pct = round(100 * mean(d2_ex > qchisq(0.99, p)), 1))
+```
+
+**Describir.** Los `r num(nrow(ex))` con las 10 variables completas tienen una distancia media de
+**`r dec(mean(d2_ex), 1)`**, contra `r dec(mean(base$d2), 1)` en la base final, y el
+`r pct(mean(d2_ex > qchisq(0.99, p)))` % pasa el corte del 99 %.
+
+**Analizar.** Con pocos minutos las tasas se vuelven inestables: un jugador con 3 tiros puede tener
+cualquier TS%. Por eso casi la mitad de ellos serían "raros". Esto respalda el filtro de 500 minutos
+que veníamos usando: sin él, la lista de raros estaría llena de ruido y no de especialistas.
+**Decisión:** siguen por fuera, pero se reportan como grupo: son jugadores con poca muestra, no con
+perfiles raros.
+
+# La decisión
+
+```{r efecto}
+cambio_cor <- abs(cor(X) - cor(X[!raros, ]))
+par_max <- which(cambio_cor == max(cambio_cor), arr.ind = TRUE)[1, ]
+info_c1 <- function(M) { e <- eigen(cor(M))$values; e[1] / sum(e) }
+c(cambio_maximo_en_una_correlacion = round(max(cambio_cor), 3),
+  c1_con_los_raros_pct = round(100 * info_c1(X), 1),
+  c1_sin_los_raros_pct = round(100 * info_c1(X[!raros, ]), 1))
+```
+
+**Describir.** Al quitar los `r k` raros, la correlación que más cambia es la de
+`r etiqueta[vars[par_max[1]]]` con `r etiqueta[vars[par_max[2]]]`, que se mueve
+`r dec(max(cambio_cor), 3)`. La primera componente del PCA pasa de `r pct(info_c1(X))` a
+`r pct(info_c1(X[!raros, ]))` de cada 100 partes de la información.
+
+**Analizar.** Quitarlos casi no cambia nada en los resultados de los talleres. Lo único que haría es
+borrar de la lista a los pívots más particulares de la liga, que son justo los que el GM necesita ver
+cuando busca una pieza difícil de reemplazar. **Decisión final:**
+
+| Grupo | Cuántos | Qué es | Qué se hace |
+|---|--:|---|---|
+| Errores de digitación | 0 | No encontramos valores imposibles | Nada que corregir |
+| Con 0 % de triples | `r sum(piso & raros)` de los `r k` | Piso de escala: no tiran de tres | Se marcan y se dejan |
+| Especialistas, sobre todo interiores | `r k - sum(piso & raros)` | Atípicos reales: tapones, rebote, ataque al aro | Se dejan y se marcan; son un hallazgo |
+| Menos de 500 minutos | `r num(nrow(excluidos))` | Poca muestra, tasas inestables | Se reportan aparte |
+
+> *Un atípico se estudia; un error se corrige.* En esta base no encontramos errores, solo
+> especialistas.
+
+```{r marcar}
+base$caso_raro <- raros
+base$piso_triple <- piso
+table(caso_raro = base$caso_raro)
+```
+
+# Lo que le decimos al GM
+
+- **La rareza en la NBA es especialización.** De los `r k` jugadores raros, el `r dec(pos_raros["C"], 1)` % son
+  pívots, y casi todos tienen al menos una estadística muy extrema (tapones, rebote o ataque al aro).
+  Solo `r solo_combinacion` son raros por la pura combinación.
+- **Mahalanobis separa al extremo coherente del perfil poco común.** `r coherente$jugador` es un pívot
+  extremo pero típico; `r disparejo$jugador` tiene números corrientes en una mezcla poco frecuente.
+- **El Q-Q no sigue la recta, y la razón está en cuatro variables torcidas.** Con logaritmo, la lista
+  baja de `r k` a `r sum(raros_log)`, pero la cola gruesa sigue: hay especialistas de verdad.
+- **No borramos a nadie.** Quitar a los raros movería una correlación como máximo
+  `r dec(max(cambio_cor), 3)`, y en la lista están jugadores como Jokić y Embiid.
+- **Para el mercado 2022**, la lista de raros sirve como alerta: si el GM pierde a uno de ellos, no va
+  a encontrar a alguien parecido mirando el promedio. Hay que buscarle reemplazo por la estadística en
+  la que se especializa.
+
+```{r lista-2022}
+base %>% filter(temporada == 2022, caso_raro) %>% arrange(desc(d2)) %>%
+  transmute(Jugador = jugador, `Posición` = posicion, Mahalanobis = dec(d2, 1),
+            VORP = valor_sobre_reemplazo) %>%
+  kable(caption = "Los raros de 2022")
+```
